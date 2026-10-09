@@ -1,0 +1,18 @@
+{
+  "rewrites": [
+    { "source": "/login", "destination": "/" },
+    { "source": "/register", "destination": "/" },
+    { "source": "/plans", "destination": "/" },
+    { "source": "/wallet", "destination": "/" },
+    { "source": "/transactions", "destination": "/" },
+    { "source": "/invite", "destination": "/" },
+    { "source": "/team", "destination": "/" },
+    { "source": "/support", "destination": "/" },
+    { "source": "/messages", "destination": "/" },
+    { "source": "/deposit", "destination": "/" },
+    { "source": "/withdraw", "destination": "/" },
+    { "source": "/me", "destination": "/" },
+    { "source": "/admin", "destination": "/" },
+    { "source": "/admin/:path*", "destination": "/" }
+  ]
+}
