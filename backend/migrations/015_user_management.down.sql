@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS admin_audit_log_created_idx;
+DROP INDEX IF EXISTS admin_audit_log_target_idx;
+DROP INDEX IF EXISTS user_message_reads_user_idx;
+DROP INDEX IF EXISTS user_messages_broadcast_idx;
+DROP INDEX IF EXISTS user_messages_recipient_idx;
+DROP INDEX IF EXISTS user_permissions_user_idx;
+DROP INDEX IF EXISTS user_access_controls_status_idx;
+DROP TABLE IF EXISTS admin_audit_log;
+DROP TABLE IF EXISTS user_message_reads;
+DROP TABLE IF EXISTS user_messages;
+DROP TABLE IF EXISTS user_permissions;
+DROP TABLE IF EXISTS user_access_controls;

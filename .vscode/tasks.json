@@ -1,0 +1,86 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "account-api: migrate",
+			"command": "npm.cmd --prefix .. run migrate",
+			"options": {
+				"cwd": "${workspaceFolder}/backend",
+				"env": {
+					"DATABASE_PATH": "${workspaceFolder}/data/dashboard.sqlite"
+				}
+			},
+			"problemMatcher": [],
+			"runOptions": {
+				"instanceLimit": 1,
+				"instancePolicy": "silent"
+			}
+		},
+		{
+			"type": "shell",
+			"label": "account-api: api",
+			"command": "node --inspect=127.0.0.1:9229 server.mjs",
+			"options": {
+				"cwd": "${workspaceFolder}/backend",
+				"env": {
+					"API_PORT": "3001",
+					"DATABASE_PATH": "${workspaceFolder}/data/dashboard.sqlite"
+				}
+			},
+			"dependsOn": [
+				"account-api: migrate"
+			],
+			"dependsOrder": "sequence",
+			"isBackground": true,
+			"problemMatcher": {
+				"owner": "account-api",
+				"pattern": {
+					"regexp": "^$"
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "Debugger listening",
+					"endsPattern": "Dashboard API listening on http://127\\.0\\.0\\.1:3001"
+				}
+			},
+			"runOptions": {
+				"instanceLimit": 1,
+				"instancePolicy": "silent"
+			}
+		},
+		{
+			"type": "shell",
+			"label": "account-web: dev",
+			"command": "npm.cmd run dev -- --host 0.0.0.0 --port 5173 --strictPort",
+			"isBackground": true,
+			"problemMatcher": {
+				"owner": "vite",
+				"pattern": {
+					"regexp": "^$"
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "VITE",
+					"endsPattern": "Local:"
+				}
+			},
+			"runOptions": {
+				"instanceLimit": 1,
+				"instancePolicy": "silent"
+			}
+		},
+		{
+			"label": "Debug All Services: start",
+			"dependsOn": [
+				"account-api: api",
+				"account-web: dev"
+			],
+			"dependsOrder": "sequence",
+			"runOptions": {
+				"instanceLimit": 1,
+				"instancePolicy": "silent"
+			}
+		}
+	]
+}

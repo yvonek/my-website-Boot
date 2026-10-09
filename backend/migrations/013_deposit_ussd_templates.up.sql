@@ -1,0 +1,1 @@
+ALTER TABLE deposit_methods ADD COLUMN ussd_template TEXT NOT NULL DEFAULT '';

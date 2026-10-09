@@ -1,0 +1,1 @@
+ALTER TABLE deposit_methods DROP COLUMN ussd_template;

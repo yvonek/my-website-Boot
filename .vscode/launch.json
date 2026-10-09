@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Account API (debug)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "preLaunchTask": "account-api: api"
+    },
+    {
+      "name": "Account Web (debug)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "account-web: dev"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug All Services",
+      "configurations": [
+        "Account API (debug)",
+        "Account Web (debug)"
+      ],
+      "preLaunchTask": "Debug All Services: start",
+      "stopAll": true
+    }
+  ]
+}

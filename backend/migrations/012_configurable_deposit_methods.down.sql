@@ -1,0 +1,10 @@
+ALTER TABLE wallet_transactions DROP COLUMN screenshot_data;
+ALTER TABLE wallet_transactions DROP COLUMN deposit_method_name;
+ALTER TABLE wallet_transactions DROP COLUMN deposit_method_id;
+ALTER TABLE deposit_methods DROP COLUMN position;
+ALTER TABLE deposit_methods DROP COLUMN logo_data;
+ALTER TABLE deposit_methods DROP COLUMN maximum_amount;
+ALTER TABLE deposit_methods DROP COLUMN minimum_amount;
+ALTER TABLE deposit_methods DROP COLUMN instructions;
+ALTER TABLE deposit_methods DROP COLUMN account_number;
+ALTER TABLE deposit_methods DROP COLUMN account_name;

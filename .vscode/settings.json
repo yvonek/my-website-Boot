@@ -1,0 +1,15 @@
+{
+    "chat.editor.preferCopilotHarness": false,
+    "chat.defaultToCopilotHarness": false,
+    "chat.agent.maxRequests": 9999,
+    "debug.onTaskErrors": "debugAnyway",
+    "terminal.integrated.profiles.windows": {
+        "Command Prompt": {
+            "path": "C:\\Windows\\System32\\cmd.exe"
+        }
+    },
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "files.exclude": {
+        "**/node_modules": true
+    }
+}

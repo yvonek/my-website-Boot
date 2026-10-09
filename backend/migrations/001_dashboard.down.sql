@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS support_tools;
+DROP TABLE IF EXISTS referrals;
+DROP TABLE IF EXISTS plans;
+DROP TABLE IF EXISTS dashboard_metrics;

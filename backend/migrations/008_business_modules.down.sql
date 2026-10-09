@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS commission_ledger;
+DROP TABLE IF EXISTS product_purchases;
+DROP TABLE IF EXISTS referral_relationships;
+DROP TABLE IF EXISTS referral_settings;
+DROP TABLE IF EXISTS support_messages;
+DROP TABLE IF EXISTS support_conversations;
+DROP TABLE IF EXISTS support_settings;
+DROP TABLE IF EXISTS withdrawal_methods;
+DROP TABLE IF EXISTS deposit_methods;

@@ -1,0 +1,12 @@
+DROP TRIGGER IF EXISTS country_settings_preserve_receiving_rate;
+DROP TRIGGER IF EXISTS deposit_method_receiving_rate_update;
+DROP TRIGGER IF EXISTS deposit_method_receiving_rate_insert;
+DROP TRIGGER IF EXISTS country_settings_positive_rate_update;
+DROP TRIGGER IF EXISTS country_settings_positive_rate_insert;
+
+ALTER TABLE wallet_transactions DROP COLUMN deposit_payment_amount;
+ALTER TABLE wallet_transactions DROP COLUMN deposit_receiving_exchange_rate;
+ALTER TABLE wallet_transactions DROP COLUMN deposit_receiving_currency_code;
+ALTER TABLE wallet_transactions DROP COLUMN deposit_receiving_country_code;
+ALTER TABLE deposit_methods DROP COLUMN receiving_country_code;
+ALTER TABLE deposit_methods DROP COLUMN cross_border_enabled;

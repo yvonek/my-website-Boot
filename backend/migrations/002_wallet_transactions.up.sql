@@ -1,0 +1,43 @@
+CREATE TABLE wallet_accounts (
+  user_id TEXT PRIMARY KEY NOT NULL,
+  available_balance INTEGER NOT NULL DEFAULT 0 CHECK (available_balance >= 0),
+  reserved_balance INTEGER NOT NULL DEFAULT 0 CHECK (reserved_balance >= 0),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE wallet_transactions (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('DEPOSIT', 'WITHDRAWAL')),
+  amount INTEGER NOT NULL CHECK (amount > 0),
+  phone_number TEXT NOT NULL,
+  payment_method TEXT NOT NULL CHECK (payment_method = 'MTN_MOMO'),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'SUCCESS', 'FAILED', 'REJECTED', 'CANCELLED')),
+  provider TEXT NOT NULL,
+  provider_reference TEXT UNIQUE,
+  internal_reference TEXT NOT NULL UNIQUE,
+  failure_reason TEXT,
+  approved_by TEXT,
+  approved_at TEXT,
+  rejection_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES wallet_accounts(user_id)
+);
+
+CREATE TABLE wallet_audit_logs (
+  id TEXT PRIMARY KEY NOT NULL,
+  transaction_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  details TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (transaction_id) REFERENCES wallet_transactions(id)
+);
+
+CREATE INDEX wallet_transactions_user_created_idx ON wallet_transactions(user_id, created_at DESC);
+CREATE INDEX wallet_transactions_status_type_idx ON wallet_transactions(status, type);
+CREATE INDEX wallet_transactions_provider_reference_idx ON wallet_transactions(provider_reference);
+CREATE INDEX wallet_audit_logs_transaction_idx ON wallet_audit_logs(transaction_id);
