@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
 import { AdminUsersPage } from '../pages/AdminUsersPage';
+import { LoginPage } from '../pages/AuthPages';
 import { PlanCard } from '../components/PlanCard';
 import { PlansPage } from '../pages/PlansPage';
 import { WalletPage } from '../pages/WalletPage';
@@ -122,6 +123,26 @@ describe('dashboard', () => {
     expect(confirmDelete).toBeEnabled();
     fireEvent.click(confirmDelete);
     await waitFor(() => expect(fetchRequest).toHaveBeenCalledWith('/api/admin/users', expect.objectContaining({ method: 'DELETE' })));
+  });
+});
+
+describe('login country fallback', () => {
+  it('keeps supported country options when the country API returns HTML', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const fetchRequest = vi.fn(async () => new Response('The page could not be found.', { status: 404, headers: { 'Content-Type': 'text/html' } }));
+    vi.stubGlobal('fetch', fetchRequest);
+
+    render(<LoginPage onAuthenticated={() => undefined} />);
+
+    expect(await screen.findByRole('option', { name: 'Rwanda (+250)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Burundi (+257)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Uganda (+256)' })).toBeInTheDocument();
+    expect(screen.getByText('+250')).toBeInTheDocument();
+    expect(await screen.findByText('Live country settings are unavailable. Showing the supported countries.')).toBeInTheDocument();
   });
 });
 

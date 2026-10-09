@@ -6,6 +6,11 @@ import { isValidCountryPhone } from '../api/money';
 import type { AuthCountryOption, AuthUser, CountryCode } from '../api/types';
 
 const countryFlags: Record<CountryCode, string> = { RW: '/assets/flags/rw.svg', BI: '/assets/flags/bi.svg', UG: '/assets/flags/ug.svg' };
+const fallbackAuthCountries: AuthCountryOption[] = [
+  { countryCode: 'RW', countryName: 'Rwanda', phonePrefix: '+250', currencyCode: 'RWF', enabled: true },
+  { countryCode: 'BI', countryName: 'Burundi', phonePrefix: '+257', currencyCode: 'BIF', enabled: true },
+  { countryCode: 'UG', countryName: 'Uganda', phonePrefix: '+256', currencyCode: 'UGX', enabled: true },
+];
 
 function useAuthCountries(mode: 'register' | 'login') {
   const [countries, setCountries] = useState<AuthCountryOption[]>([]);
@@ -21,7 +26,11 @@ function useAuthCountries(mode: 'register' | 'login') {
       if (cancelled) return;
       setCountries(body.countries);
       setSelectedCountry((current) => body.countries.some((country) => country.countryCode === current) ? current : body.countries[0]?.countryCode ?? 'RW');
-    }).catch((reason: unknown) => { if (!cancelled) setCountryError(reason instanceof Error ? reason.message : 'Countries could not be loaded.'); })
+    }).catch(() => {
+      if (cancelled) return;
+      setCountries(fallbackAuthCountries);
+      setCountryError('Live country settings are unavailable. Showing the supported countries.');
+    })
       .finally(() => { if (!cancelled) setLoadingCountries(false); });
     return () => { cancelled = true; };
   }, [mode]);

@@ -15,7 +15,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return await Promise.race([
       (async () => {
         const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init, credentials: 'same-origin', signal: controller.signal });
-        const body = await response.json() as T & { error?: string };
+        let body: T & { error?: string };
+        try {
+          body = JSON.parse(await response.text()) as T & { error?: string };
+        } catch {
+          throw new Error('The API returned a non-JSON response. Check the backend deployment configuration.');
+        }
         if (!response.ok) throw new Error(body.error ?? `Request failed with status ${response.status}`);
         return body;
       })(),
