@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: rwanda-wealth-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm ci
+    startCommand: npm run migrate && npm run api
+    healthCheckPath: /api/health
+    disk:
+      name: rwanda-wealth-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /var/data/dashboard.sqlite
+      - key: ADMIN_API_TOKEN
+        generateValue: true

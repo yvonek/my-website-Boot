@@ -3,7 +3,7 @@ import { randomUUID, randomBytes, randomInt, scryptSync, timingSafeEqual, create
 import { database } from './database.mjs';
 import { convertLocalToRwf, convertRwfToLocal, normalizeCountryPhone, supportedCountries } from './currency.mjs';
 
-const port = Number(process.env.API_PORT ?? 3001);
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3001);
 const adminToken = process.env.ADMIN_API_TOKEN;
 const sessionLifetimeSeconds = 60 * 60 * 24 * 7;
 const productIncomeIntervalMs = 60_000;
@@ -1105,9 +1105,10 @@ async function handle(request, response) {
 const server = createServer((request, response) => { handle(request, response).catch((error) => sendJson(response, 500, { error: error.message })); });
 const productIncomeTimer = setInterval(() => { try { settleDueProductIncome(); } catch (error) { console.error('Could not settle product income:', error); } }, productIncomeIntervalMs);
 productIncomeTimer.unref();
-server.listen(port, '127.0.0.1', () => {
+const host = process.env.HOST ?? (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
+server.listen(port, host, () => {
   try { settleDueProductIncome(); } catch (error) { console.error('Could not settle product income:', error); }
-  console.log(`Dashboard API listening on http://127.0.0.1:${port} (admin review)`);
+  console.log(`Dashboard API listening on http://${host}:${port} (admin review)`);
 });
 process.on('SIGINT', () => { clearInterval(productIncomeTimer); server.close(() => database.close()); });
 process.on('SIGTERM', () => { clearInterval(productIncomeTimer); server.close(() => database.close()); });
