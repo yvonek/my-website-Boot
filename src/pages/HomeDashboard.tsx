@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import type { Plan } from '../api/types';
 import { api } from '../api';
 import { formatCurrencyAmount } from '../api/money';
-import type { DashboardData, WalletBalance } from '../api/types';
+import type { DailyCheckinStatus, DashboardData, WalletBalance } from '../api/types';
 import { PlanCard } from '../components/PlanCard';
 
 const tomatoSlides = [
@@ -24,7 +24,7 @@ export function HomeDashboard({ data, state, onRetry }: { data: DashboardData | 
   const [purchasedProductNames, setPurchasedProductNames] = useState<string[]>([]);
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [activeTomatoSlide, setActiveTomatoSlide] = useState(0);
-  const [checkin, setCheckin] = useState<{ enabled: boolean; rewardAmount: number; claimed: boolean } | null>(null);
+  const [checkin, setCheckin] = useState<DailyCheckinStatus | null>(null);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinMessage, setCheckinMessage] = useState('');
 

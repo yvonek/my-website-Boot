@@ -1390,6 +1390,7 @@
 }
 @media (max-width: 560px) {
   .admin-country-grid { grid-template-columns: minmax(0, 1fr); }
+}
 
 .admin-support-inbox__thread .fui-Textarea {
   width: 100%;

@@ -81,6 +81,14 @@
 				"instanceLimit": 1,
 				"instancePolicy": "silent"
 			}
+		},
+		{
+			"label": "account-web: build",
+			"type": "shell",
+			"command": "npm.cmd run build",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
 		}
 	]
 }
