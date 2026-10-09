@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/health?__proxy_path=:path*" },
     { "source": "/login", "destination": "/" },
     { "source": "/register", "destination": "/" },
     { "source": "/plans", "destination": "/" },

@@ -68,3 +68,25 @@ test('Vercel API proxy forwards paths, JSON bodies, cookies, and upstream sessio
     else process.env.BACKEND_API_URL = originalBackendUrl;
   }
 });
+
+test('Vercel rewrite forwards nested API paths and preserves the original query', async () => {
+  const originalBackendUrl = process.env.BACKEND_API_URL;
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  process.env.BACKEND_API_URL = 'https://account-api.example.test';
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url: String(url), options });
+    return new Response('{"countries":[]}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const response = createResponse();
+    await handler(createRequest({ url: '/api/health?__proxy_path=public%2Fcountries&mode=login' }), response);
+    assert.equal(requests[0].url, 'https://account-api.example.test/api/public/countries?mode=login');
+    assert.equal(response.statusCode, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalBackendUrl === undefined) delete process.env.BACKEND_API_URL;
+    else process.env.BACKEND_API_URL = originalBackendUrl;
+  }
+});

@@ -23,7 +23,18 @@ export default async function handler(request, response) {
   }
 
   try {
-    const target = new URL(request.url ?? '/api', backendUrl);
+    const incoming = new URL(request.url ?? '/api', 'http://localhost');
+    const rewrittenPath = incoming.searchParams.get('__proxy_path');
+    if (rewrittenPath !== null && (rewrittenPath.startsWith('/') || rewrittenPath.split('/').some((segment) => segment === '..'))) {
+      response.statusCode = 400;
+      response.setHeader('Content-Type', 'application/json; charset=utf-8');
+      response.end(JSON.stringify({ error: 'Invalid API path.' }));
+      return;
+    }
+    const pathname = rewrittenPath === null ? incoming.pathname : `/api/${rewrittenPath}`;
+    incoming.searchParams.delete('__proxy_path');
+    const query = incoming.searchParams.toString();
+    const target = new URL(`${pathname}${query ? `?${query}` : ''}`, backendUrl);
     const headers = new Headers();
     for (const [name, rawValue] of Object.entries(request.headers)) {
       if (name.toLowerCase() === 'host' || hopByHopHeaders.has(name.toLowerCase()) || rawValue === undefined) continue;
