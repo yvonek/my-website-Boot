@@ -80,7 +80,9 @@ export function RegisterPage({ onAuthenticated }: { onAuthenticated: (user: Auth
     <CountryPhoneFields countries={countries} selectedCountry={selectedCountry} onCountryChange={(countryCode) => { setSelectedCountry(countryCode); setPhoneNumber(''); setError(''); }} phoneNumber={phoneNumber} onPhoneChange={(value) => { setPhoneNumber(value); setError(''); }} />
     <Field label="Password (6 digits)"><IconField icon={<LockClosedRegular />}><Input autoComplete="new-password" inputMode="numeric" type={showPassword ? 'text' : 'password'} maxLength={6} value={password} onChange={(_: unknown, data: { value: string }) => { setPassword(data.value.replace(/\D/g, '').slice(0, 6)); setError(''); }} placeholder="6-digit password" /><button className="auth-password-toggle" type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? <EyeOffRegular /> : <EyeRegular />}</button></IconField></Field>
     <Field label="Referral Code (optional)"><IconField icon={<GiftRegular />}><Input autoComplete="off" value={referralCode} onChange={(_: unknown, data: { value: string }) => { setReferralCode(data.value); setError(''); }} placeholder="Referral code" /></IconField></Field>
-    {(error || countryError || !loadingCountries && !countries.length) && <MessageBar intent="error"><MessageBarBody>{error || countryError || 'No countries are currently available for registration.'}</MessageBarBody></MessageBar>}
+    {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+    {countryError && <MessageBar intent="warning"><MessageBarBody>{countryError}</MessageBarBody></MessageBar>}
+    {!loadingCountries && !countries.length && <MessageBar intent="error"><MessageBarBody>No countries are currently available for registration.</MessageBarBody></MessageBar>}
     <Button className="auth-submit" type="submit" appearance="primary" icon={<PersonAddRegular />} disabled={loading || loadingCountries || !countries.length}>{loading ? 'Creating Account...' : 'Create Account'}</Button>
   </form></AuthFrame>;
 }
@@ -106,7 +108,9 @@ export function LoginPage({ onAuthenticated }: { onAuthenticated: (user: AuthUse
   return <AuthFrame mode="login"><form className="auth-form" onSubmit={submit}>
     <CountryPhoneFields countries={countries} selectedCountry={selectedCountry} onCountryChange={(countryCode) => { setSelectedCountry(countryCode); setPhoneNumber(''); setError(''); }} phoneNumber={phoneNumber} onPhoneChange={(value) => { setPhoneNumber(value); setError(''); }} />
     <Field label="Password"><IconField icon={<LockClosedRegular />}><Input autoComplete="current-password" inputMode="numeric" type={showPassword ? 'text' : 'password'} maxLength={6} value={password} onChange={(_: unknown, data: { value: string }) => { setPassword(data.value.replace(/\D/g, '').slice(0, 6)); setError(''); }} placeholder="6-digit password" /><button className="auth-password-toggle" type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? <EyeOffRegular /> : <EyeRegular />}</button></IconField></Field>
-    {(error || countryError || !loadingCountries && !countries.length) && <MessageBar intent="error"><MessageBarBody>{error || countryError || 'No country is available for sign-in.'}</MessageBarBody></MessageBar>}
+    {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+    {countryError && <MessageBar intent="warning"><MessageBarBody>{countryError}</MessageBarBody></MessageBar>}
+    {!loadingCountries && !countries.length && <MessageBar intent="error"><MessageBarBody>No country is available for sign-in.</MessageBarBody></MessageBar>}
     <Button className="auth-submit" type="submit" appearance="primary" disabled={loading || loadingCountries || !countries.length}>{loading ? 'Signing In...' : 'Login'}</Button>
   </form></AuthFrame>;
 }
