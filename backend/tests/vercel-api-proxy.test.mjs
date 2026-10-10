@@ -19,16 +19,24 @@ function createResponse() {
   };
 }
 
-test('Vercel API proxy returns a JSON setup error when no backend is configured', async () => {
+test('Vercel API proxy uses the Neon production default when no override is configured', async () => {
   const originalBackendUrl = process.env.BACKEND_API_URL;
+  const originalFetch = globalThis.fetch;
   delete process.env.BACKEND_API_URL;
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    return new Response('{"status":"ok"}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
   try {
     const response = createResponse();
     await handler(createRequest({ url: '/api/auth/login', method: 'POST' }), response);
-    assert.equal(response.statusCode, 503);
+    assert.equal(requests[0], 'https://br-fragrant-king-b4hryjnv-accountapi.compute.c-6.us-east-2.aws.neon.tech/api/auth/login');
+    assert.equal(response.statusCode, 200);
     assert.match(response.headers['content-type'], /application\/json/);
-    assert.match(JSON.parse(response.body).error, /BACKEND_API_URL/);
+    assert.deepEqual(JSON.parse(response.body), { status: 'ok' });
   } finally {
+    globalThis.fetch = originalFetch;
     if (originalBackendUrl === undefined) delete process.env.BACKEND_API_URL;
     else process.env.BACKEND_API_URL = originalBackendUrl;
   }

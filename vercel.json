@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://br-fragrant-king-b4hryjnv-accountapi.compute.c-6.us-east-2.aws.neon.tech/api/:path*" },
+    { "source": "/api/:path*", "destination": "/api/health?__proxy_path=:path*" },
     { "source": "/login", "destination": "/" },
     { "source": "/register", "destination": "/" },
     { "source": "/plans", "destination": "/" },

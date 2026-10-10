@@ -14,13 +14,7 @@ const hopByHopHeaders = new Set([
 export const config = { api: { bodyParser: false } };
 
 export default async function handler(request, response) {
-  const backendUrl = process.env.BACKEND_API_URL;
-  if (!backendUrl) {
-    response.statusCode = 503;
-    response.setHeader('Content-Type', 'application/json; charset=utf-8');
-    response.end(JSON.stringify({ error: 'Backend API is not configured. Set BACKEND_API_URL in Vercel.' }));
-    return;
-  }
+  const backendUrl = process.env.BACKEND_API_URL ?? 'https://br-fragrant-king-b4hryjnv-accountapi.compute.c-6.us-east-2.aws.neon.tech';
 
   try {
     const incoming = new URL(request.url ?? '/api', 'http://localhost');
