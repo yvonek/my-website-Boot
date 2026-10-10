@@ -108,7 +108,7 @@ async function currentUser(request: Request) {
   if (!token) return null;
   const session = await pool.query('SELECT user_id AS "userId" FROM auth_sessions WHERE token_hash = $1 AND expires_at::timestamptz > now()', [tokenHash(token)]);
   if (!session.rows[0]) return null;
-    const result = await pool.query(`SELECT id, full_name AS "fullName", phone_number AS "phoneNumber",
+  const result = await pool.query(`SELECT id, full_name AS "fullName", phone_number AS "phoneNumber",
       referral_code AS "referralCode", role, country_code AS "countryCode", currency_code AS "currencyCode",
       welcome_bonus_amount AS "welcomeBonusAmount", welcome_bonus_awarded_at AS "welcomeBonusAwardedAt",
       welcome_bonus_unlocked_at AS "welcomeBonusUnlockedAt" FROM users WHERE id = $1`, [session.rows[0].userId]);
