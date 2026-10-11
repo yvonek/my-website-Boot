@@ -105,7 +105,7 @@ describe('dashboard', () => {
     expect(screen.getByText('ACCOUNT ACCESS')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Live users' }));
     expect(window.location.pathname).toBe('/admin/live-users');
-    expect(screen.getByText('SESSION PRESENCE · 60 SECOND WINDOW')).toBeInTheDocument();
+    expect(screen.getByText('SESSION PRESENCE · 20 SECOND WINDOW')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Users' }));
     expect(window.location.pathname).toBe('/admin/users');
     expect(await screen.findByText('Member One')).toBeInTheDocument();

@@ -79,8 +79,12 @@ export default function App() {
     if (!authLoaded || !authUser) return;
     const sendHeartbeat = () => void fetch('/api/presence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ path }) }).catch(() => undefined);
     sendHeartbeat();
-    const timer = window.setInterval(sendHeartbeat, 15000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') sendHeartbeat(); }, 5000);
+    const sendLeave = () => { try { navigator.sendBeacon?.('/api/presence', new Blob([JSON.stringify({ path, leave: true })], { type: 'application/json' })); } catch { /* best effort */ } };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') sendLeave(); else sendHeartbeat(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', sendLeave);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('pagehide', sendLeave); };
   }, [authLoaded, authUser?.id, path]);
   useEffect(() => {
     if (!authUser) { setAccessUser(null); return; }

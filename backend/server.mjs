@@ -397,7 +397,9 @@ async function handle(request, response) {
   const user = path.startsWith('/api/admin/') ? null : currentUser(request);
   if (path.startsWith('/api/') && !path.startsWith('/api/admin/') && !user) { sendJson(response, 401, { error: 'Authentication required.' }); return; }
   if (path === '/api/presence' && method === 'POST') {
-    const page = currentPageForPath(String((await readBody(request)).path ?? ''));
+    const presenceInput = await readBody(request);
+    if (presenceInput.leave === true) { database.prepare('UPDATE auth_sessions SET last_seen_at = ?, current_page = ? WHERE token_hash = ? AND user_id = ?').run(new Date(Date.now() - 3_600_000).toISOString(), 'Other', tokenHash(sessionCookie(request)), user.id); sendJson(response, 200, { ok: true }); return; }
+    const page = currentPageForPath(String(presenceInput.path ?? ''));
     const result = database.prepare('UPDATE auth_sessions SET last_seen_at = ?, current_page = ? WHERE token_hash = ? AND user_id = ? AND expires_at > ?').run(now(), page, tokenHash(sessionCookie(request)), user.id, now());
     if (!result.changes) { sendJson(response, 401, { error: 'Authentication required.' }); return; }
     sendJson(response, 200, { ok: true }); return;
@@ -759,7 +761,7 @@ async function handle(request, response) {
     const page = String(url.searchParams.get('page') ?? 'ALL').trim().slice(0, 40);
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 25));
     const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-    const since = new Date(Date.now() - 60_000).toISOString();
+    const since = new Date(Date.now() - 20_000).toISOString();
     const liveSessions = database.prepare(`SELECT s.id AS sessionId, s.user_id AS userId, u.full_name AS fullName, u.phone_number AS phoneNumber, u.country_code AS countryCode, u.currency_code AS currencyCode,
       s.current_page AS currentPage, s.last_seen_at AS lastActive, s.created_at AS loginAt,
       (SELECT coalesce(sum(t.amount), 0) FROM wallet_transactions t WHERE t.user_id = u.id AND t.type = 'DEPOSIT' AND t.status = 'SUCCESS') AS totalDeposit,
@@ -772,7 +774,7 @@ async function handle(request, response) {
       WHERE s.expires_at > ? AND s.last_seen_at >= ? AND (? = '' OR u.full_name LIKE '%' || ? || '%' OR u.phone_number LIKE '%' || ? || '%') AND (? = 'ALL' OR s.current_page = ?)
       ORDER BY s.last_seen_at DESC LIMIT ? OFFSET ?`).all(now(), since, search, search, search, page, page, limit, offset);
     const total = database.prepare(`SELECT count(*) AS count FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.expires_at > ? AND s.last_seen_at >= ? AND (? = '' OR u.full_name LIKE '%' || ? || '%' OR u.phone_number LIKE '%' || ? || '%') AND (? = 'ALL' OR s.current_page = ?)`).get(now(), since, search, search, search, page, page).count;
-    sendJson(response, 200, { users: liveSessions.map((session) => { const currency = currencyForUser(session.userId); return { ...session, displayTotalDeposit: localAmount(session.totalDeposit, currency), displayTotalWithdrawal: localAmount(session.totalWithdrawal, currency), displayCurrentBalance: localAmount(walletBalanceView(session.userId).availableBalance, currency), currencyCode: currency.currencyCode, active: session.productsPurchased > 0 }; }), total, limit, offset, onlineWindowSeconds: 60 }); return;
+    sendJson(response, 200, { users: liveSessions.map((session) => { const currency = currencyForUser(session.userId); return { ...session, lastSeenAt: session.lastActive, displayTotalDeposit: localAmount(session.totalDeposit, currency), displayTotalWithdrawal: localAmount(session.totalWithdrawal, currency), displayCurrentBalance: localAmount(walletBalanceView(session.userId).availableBalance, currency), currencyCode: currency.currencyCode, active: session.productsPurchased > 0 }; }), total, limit, offset, onlineWindowSeconds: 20 }); return;
   }
   if (path === '/api/admin/members' && method === 'GET') {
     if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }

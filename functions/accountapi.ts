@@ -198,7 +198,7 @@ async function readBody(request: Request) {
 
 const userFeatures = defaultPermissions;
 const accountStatuses = ['ACTIVE', 'FROZEN', 'RESTRICTED', 'SUSPENDED'];
-const liveWindowSql = "interval '60 seconds'";
+const liveWindowSql = "interval '20 seconds'";
 const totalsSql = (alias: string) => `
   (SELECT coalesce(sum(t.amount), 0)::bigint::text FROM wallet_transactions t WHERE t.user_id = ${alias}.id AND t.type = 'DEPOSIT' AND t.status = 'SUCCESS') AS "totalDeposit",
   (SELECT coalesce(sum(t.amount), 0)::bigint::text FROM wallet_transactions t WHERE t.user_id = ${alias}.id AND t.type = 'WITHDRAWAL' AND t.status IN ('APPROVED', 'AWAITING_PAYOUT', 'PROCESSING', 'SUCCESS')) AS "totalWithdrawal",
@@ -207,7 +207,7 @@ const lastSessionSql = (column: string) => `(SELECT s.${column} FROM auth_sessio
 const referredBySql = `coalesce((SELECT sponsor.full_name FROM referral_relationships r JOIN users sponsor ON sponsor.id = r.sponsor_user_id WHERE r.user_id = u.id), (SELECT sponsor.full_name FROM users sponsor WHERE sponsor.id = u.referred_by))`;
 
 function maskPhone(phone: unknown) { const value = String(phone ?? ''); return `${value.slice(0, 4)}****${value.slice(-2)}`; }
-function isLive(lastSeen: unknown) { return Boolean(lastSeen) && Date.now() - new Date(String(lastSeen)).getTime() <= 60_000; }
+function isLive(lastSeen: unknown) { return Boolean(lastSeen) && Date.now() - new Date(String(lastSeen)).getTime() <= 20_000; }
 function parseJsonColumn(value: unknown) { if (typeof value !== 'string') return value ?? null; try { return JSON.parse(value); } catch { return value; } }
 
 async function auditAdmin(adminId: string | null, targetUserId: string | null, action: string, previousValue: unknown = null, newValue: unknown = null, metadata: unknown = null) {
@@ -527,6 +527,10 @@ export default {
 
       if (path === '/api/presence' && method === 'POST') {
         const input = await readBody(request);
+        if (input.leave === true) {
+          await pool.query('UPDATE auth_sessions SET last_seen_at = $1, current_page = $2 WHERE token_hash = $3 AND user_id = $4', [new Date(Date.now() - 3_600_000).toISOString(), 'Other', tokenHash(cookieToken(request)), user.id]);
+          return json({ ok: true });
+        }
         const page = String(input.path ?? '');
         const currentPage = new Map([['/', 'Home'], ['/plans', 'Products'], ['/wallet', 'My Wallet'], ['/deposit', 'Deposit'], ['/withdraw', 'Withdraw'], ['/team', 'My Team'], ['/invite', 'Promotion'], ['/support', 'Support'], ['/messages', 'Messages'], ['/me', 'Profile']]).get(page) ?? 'Other';
         await pool.query('UPDATE auth_sessions SET last_seen_at = $1, current_page = $2 WHERE token_hash = $3 AND user_id = $4 AND expires_at::timestamptz > now()', [now(), currentPage, tokenHash(cookieToken(request)), user.id]);
@@ -564,7 +568,7 @@ export default {
           pool.query("SELECT coalesce(sum(amount),0)::bigint::text AS amount FROM wallet_transactions WHERE type='DEPOSIT' AND status='SUCCESS'"),
           pool.query("SELECT coalesce(sum(amount),0)::bigint::text AS amount FROM wallet_transactions WHERE type='WITHDRAWAL' AND status IN ('APPROVED','AWAITING_PAYOUT','PROCESSING','SUCCESS')"),
           pool.query("SELECT count(DISTINCT user_id)::integer AS count FROM product_purchases WHERE status='COMPLETED'"),
-          pool.query("SELECT count(DISTINCT user_id)::integer AS count FROM auth_sessions WHERE expires_at::timestamptz > now() AND last_seen_at::timestamptz >= now() - interval '60 seconds'"),
+          pool.query("SELECT count(DISTINCT user_id)::integer AS count FROM auth_sessions WHERE expires_at::timestamptz > now() AND last_seen_at::timestamptz >= now() - interval '20 seconds'"),
           pool.query("SELECT count(*)::integer AS count FROM product_purchases WHERE status='COMPLETED'"),
           pool.query('SELECT count(*)::integer AS count FROM referral_relationships'),
           pool.query("SELECT coalesce(sum(commission_amount),0)::bigint::text AS amount FROM commission_ledger WHERE status='APPROVED'"),
@@ -949,12 +953,12 @@ export default {
         const users = await Promise.all(sessions.rows.map(async (session) => {
           const [currency, wallet] = await Promise.all([currencyForUser(session.userId), balanceView(session.userId)]);
           return {
-            ...session, totalDeposit: Number(session.totalDeposit), totalWithdrawal: Number(session.totalWithdrawal), currentBalance: Number(session.currentBalance),
+            ...session, lastSeenAt: session.lastActive, totalDeposit: Number(session.totalDeposit), totalWithdrawal: Number(session.totalWithdrawal), currentBalance: Number(session.currentBalance),
             displayTotalDeposit: localAmount(Number(session.totalDeposit), currency.unitsPerRwf), displayTotalWithdrawal: localAmount(Number(session.totalWithdrawal), currency.unitsPerRwf),
             displayCurrentBalance: wallet.displayAvailableBalance, currencyCode: currency.currencyCode, active: session.productsPurchased > 0,
           };
         }));
-        return json({ users, total: total.rows[0].count, limit, offset, onlineWindowSeconds: 60 });
+        return json({ users, total: total.rows[0].count, limit, offset, onlineWindowSeconds: 20 });
       }
 
       if (path === '/api/admin/members' && method === 'GET') {
