@@ -1,6 +1,6 @@
 import type { AdminPlanInput, ApiClient, DailyCheckinClaim, DailyCheckinStatus, DashboardData, DepositRequest, LoginRequest, RegisterRequest, UserMessage, WalletProduct, WalletRequest, WalletTransactionResponse, WithdrawalAccountInput, WithdrawalPreview } from './types';
 
-const requestTimeoutMs = 4000;
+const requestTimeoutMs = 30000;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();

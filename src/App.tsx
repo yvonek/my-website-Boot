@@ -99,7 +99,7 @@ export default function App() {
     let cancelled = false;
     const loadingFailsafe = window.setTimeout(() => {
       if (!cancelled) setState('error');
-    }, 5000);
+    }, 30000);
     setState('loading');
     api.getDashboard().then((result) => {
       if (cancelled) return;
