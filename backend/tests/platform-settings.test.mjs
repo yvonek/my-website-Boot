@@ -87,7 +87,7 @@ test('central settings award one global welcome bonus and snapshot configured wi
   };
   const saved = await request('/api/admin/platform-settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings) }, adminCookie);
   assert.equal(saved.response.status, 200);
-  assert.deepEqual(saved.body, settings);
+  assert.deepEqual(saved.body, { ...settings, minimumWithdrawal: 0 });
   const invalid = await request('/api/admin/platform-settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...settings, withdrawalFeeValue: 101 }) }, adminCookie);
   assert.equal(invalid.response.status, 400);
 

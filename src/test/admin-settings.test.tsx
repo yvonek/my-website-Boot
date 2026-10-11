@@ -54,6 +54,7 @@ describe('Admin platform settings', () => {
       withdrawalFeeValue: 5,
       welcomeBonusEnabled: true,
       welcomeBonusAmount: 5000,
+      minimumWithdrawal: 0,
     });
   });
 });

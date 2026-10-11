@@ -282,12 +282,13 @@ async function depositMethodView(row: Record<string, any>, currency: { currencyC
 }
 
 async function platformSettings() {
-  const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('withdrawal_fee_enabled','withdrawal_fee_type','withdrawal_fee_value','welcome_bonus_enabled','welcome_bonus_amount')");
+  const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('withdrawal_fee_enabled','withdrawal_fee_type','withdrawal_fee_value','welcome_bonus_enabled','welcome_bonus_amount','minimum_withdrawal_amount')");
   const read = Object.fromEntries(result.rows.map((row) => [row.key, row.value])) as Record<string, string | undefined>;
   const withdrawalFeeType = read.withdrawal_fee_type === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
   return {
     withdrawalFeeEnabled: read.withdrawal_fee_enabled === '1', withdrawalFeeType,
     withdrawalFeeValue: Number(read.withdrawal_fee_value ?? 0), welcomeBonusEnabled: read.welcome_bonus_enabled === '1', welcomeBonusAmount: Number(read.welcome_bonus_amount ?? 0),
+    minimumWithdrawal: Number(read.minimum_withdrawal_amount ?? 0),
   };
 }
 
@@ -643,7 +644,7 @@ export default {
         const input = await readBody(request);
         const settings = {
           telegram_url: String(input.telegramUrl ?? ''),
-          telegram_popup_message: String(input.telegramPopupMessage ?? ''),
+          telegram_popup_message: String(input.telegramPopupMessage ?? '').slice(0, 600),
           support_email: String(input.supportEmail ?? ''),
           live_chat_enabled: input.liveChatEnabled ? '1' : '0',
         };
@@ -1029,9 +1030,11 @@ export default {
         const feeType = input.withdrawalFeeType;
         const feeValue = Number(input.withdrawalFeeValue);
         const welcomeAmount = Number(input.welcomeBonusAmount);
+        const minimumWithdrawal = Number(input.minimumWithdrawal ?? 0);
+        if (!Number.isSafeInteger(minimumWithdrawal) || minimumWithdrawal < 0) return json({ error: 'Enter a valid minimum withdrawal amount.' }, 400);
         if (typeof input.withdrawalFeeEnabled !== 'boolean' || !['PERCENTAGE', 'FIXED'].includes(String(feeType)) || !Number.isFinite(feeValue) || feeValue < 0 || (feeType === 'PERCENTAGE' && feeValue > 100) || (feeType === 'FIXED' && !Number.isSafeInteger(feeValue))) return json({ error: 'Enter a valid withdrawal fee type and value.' }, 400);
         if (typeof input.welcomeBonusEnabled !== 'boolean' || !Number.isSafeInteger(welcomeAmount) || welcomeAmount < 0) return json({ error: 'Enter a valid welcome bonus amount.' }, 400);
-        const values = { withdrawal_fee_enabled: input.withdrawalFeeEnabled ? '1' : '0', withdrawal_fee_type: String(feeType), withdrawal_fee_value: String(feeValue), welcome_bonus_enabled: input.welcomeBonusEnabled ? '1' : '0', welcome_bonus_amount: String(welcomeAmount) };
+        const values = { withdrawal_fee_enabled: input.withdrawalFeeEnabled ? '1' : '0', withdrawal_fee_type: String(feeType), withdrawal_fee_value: String(feeValue), welcome_bonus_enabled: input.welcomeBonusEnabled ? '1' : '0', welcome_bonus_amount: String(welcomeAmount), minimum_withdrawal_amount: String(minimumWithdrawal) };
         for (const [key, value] of Object.entries(values)) {
           await pool.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', [key, value, now()]);
         }
@@ -1180,6 +1183,8 @@ export default {
           return json({ error: 'Your bound withdrawal account is invalid or its provider is unavailable in your country.' }, 400);
         }
         const calculation = await withdrawalFee(amount);
+        const minimumWithdrawal = (await platformSettings()).minimumWithdrawal;
+        if (amount < minimumWithdrawal) return json({ error: `Minimum withdrawal is ${localAmount(minimumWithdrawal, user.unitsPerRwf).toLocaleString()} ${user.currencyCode}.` }, 400);
         const balance = await balanceView(user.id);
         if (amount > balance.availableBalance) return json({ error: 'Withdrawal amount exceeds available balance.' }, 400);
         if (withdrawalRoute === 'preview') {

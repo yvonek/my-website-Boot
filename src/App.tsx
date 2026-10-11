@@ -60,7 +60,7 @@ function TelegramInvitePopup({ userId }: { userId: string }) {
   };
 
   if (!invitation) return null;
-  return <div className="telegram-invite-backdrop"><section className="telegram-invite" role="dialog" aria-modal="true" aria-labelledby="telegram-invite-title"><span className="telegram-invite__eyebrow">COMMUNITY</span><h2 id="telegram-invite-title">Join our Telegram group</h2><p>{invitation.message}</p><div className="telegram-invite__actions"><a href={invitation.url} target="_blank" rel="noreferrer" onClick={dismiss}>Open Telegram</a><button type="button" onClick={dismiss}>Not now</button></div></section></div>;
+  return <div className="telegram-invite-backdrop"><section className="telegram-invite" role="dialog" aria-modal="true" aria-labelledby="telegram-invite-title"><span className="telegram-invite__eyebrow">COMMUNITY</span><h2 id="telegram-invite-title">Join our Telegram group</h2><p>{invitation.message}</p><div className="telegram-invite__actions"><a href={invitation.url} target="_blank" rel="noreferrer" onClick={dismiss}>Join</a><button type="button" onClick={dismiss}>Not now</button></div></section></div>;
 }
 
 export default function App() {
