@@ -197,8 +197,8 @@ function parseDepositMethod(input) {
   const accountNumber = String(input.accountNumber ?? '').trim().slice(0, 80);
   const instructions = String(input.instructions ?? '').trim().slice(0, 1000);
   let ussdTemplate = String(input.ussdTemplate ?? '').trim().slice(0, 160);
-  const minimumAmount = Number(input.minimumAmount);
-  const maximumAmount = Number(input.maximumAmount);
+  const minimumAmount = Math.round(Number(input.minimumAmount));
+  const maximumAmount = Math.round(Number(input.maximumAmount));
   const enabled = Boolean(input.enabled);
   const countryCode = ['RW', 'BI', 'UG'].includes(input.countryCode) ? input.countryCode : 'RW';
   const crossBorderEnabled = input.crossBorderEnabled === true;
@@ -210,7 +210,10 @@ function parseDepositMethod(input) {
     const literalMinimum = new RegExp(`(?<!\\d)${minimumAmount}(?!\\d)`);
     ussdTemplate = ussdTemplate.replace(literalMinimum, '{amount}');
   }
-  if (!name || !Number.isSafeInteger(minimumAmount) || minimumAmount < 0 || !Number.isSafeInteger(maximumAmount) || maximumAmount <= 0 || minimumAmount > maximumAmount) return { error: 'Enter a name and valid minimum and maximum deposit amounts.' };
+  if (!name) return { error: 'Enter a payment method name.' };
+  if (!Number.isSafeInteger(minimumAmount) || minimumAmount < 0) return { error: 'Enter a valid minimum deposit amount (0 or more).' };
+  if (!Number.isSafeInteger(maximumAmount) || maximumAmount <= 0) return { error: 'Enter a valid maximum deposit amount (greater than 0).' };
+  if (minimumAmount > maximumAmount) return { error: 'Minimum deposit cannot be greater than the maximum deposit.' };
   if (enabled && (!accountName || !accountNumber)) return { error: 'Add an account/merchant name and number before activating this method.' };
   if (crossBorderEnabled && !['RW', 'BI', 'UG'].includes(input.receivingCountryCode)) return { error: 'Choose a supported receiving country for cross-border deposits.' };
   if (crossBorderEnabled && (!receivingCountry || Number(receivingCountry.unitsPerRwf) <= 0)) return { error: 'Configure a positive receiving-country exchange rate before enabling cross-border deposits.' };
