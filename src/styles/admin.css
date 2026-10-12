@@ -53,12 +53,15 @@
 }
 
 .admin-console-brand::before {
-  width: 10px;
-  height: 28px;
-  border-radius: 4px;
-  background: var(--admin-green);
-  content: '';
-  box-shadow: 0 0 18px rgba(131, 212, 168, .22);
+  display: none;
+}
+
+.admin-console-brand img {
+  display: block;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
 }
 
 .admin-console-header > span {

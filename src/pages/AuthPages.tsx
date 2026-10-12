@@ -40,7 +40,7 @@ function useAuthCountries(mode: 'register' | 'login') {
 
 function AuthFrame({ mode, children }: { mode: 'register' | 'login'; children: ReactNode }) {
   const registering = mode === 'register';
-  return <main className="auth-page"><div className="auth-shade" /><section className="auth-card"><div className="auth-mark" aria-hidden="true"><span>✦</span></div><h1>{registering ? <>Create <em>Your Account</em></> : <>Welcome <em>Back</em></>}</h1><p className="auth-subtitle">{registering ? 'Join us and start your journey.' : 'Sign in to continue to your account.'}</p>{children}<p className="auth-switch">{registering ? 'Already have an account?' : "Don't have an account?"} <a href={registering ? '/login' : '/register'}>{registering ? 'Login' : 'Create Account'}</a></p></section></main>;
+  return <main className="auth-page"><div className="auth-shade" /><section className="auth-card"><img className="auth-mark" src="/assets/tomatohub-mark.svg" alt="TomatoHub" /><h1>{registering ? <>Create <em>Your Account</em></> : <>Welcome <em>Back</em></>}</h1><p className="auth-subtitle">{registering ? 'Join us and start your journey.' : 'Sign in to continue to your account.'}</p>{children}<p className="auth-switch">{registering ? 'Already have an account?' : "Don't have an account?"} <a href={registering ? '/login' : '/register'}>{registering ? 'Login' : 'Create Account'}</a></p></section></main>;
 }
 
 function IconField({ icon, children }: { icon: ReactNode; children: ReactNode }) { return <span className="auth-input-wrap"><span className="auth-input-icon">{icon}</span>{children}</span>; }
