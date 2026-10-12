@@ -38,7 +38,12 @@ function getInitialDarkMode() {
   return saved ? saved === 'dark' : window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 }
 
-function TelegramInvitePopup({ userId }: { userId: string }) {
+function localizeAmounts(message: string, currencyCode: string, rate: number) {
+  if (!(rate > 0) || currencyCode === 'RWF') return message;
+  return message.replace(/(\d[\d,]*(?:\.\d+)?)\s*(?:RWF|FRW)\b/gi, (_match, amount: string) => `${Math.round(Number(amount.replace(/,/g, '')) * rate).toLocaleString('en-US')} ${currencyCode}`);
+}
+
+function TelegramInvitePopup({ userId, currencyCode = 'RWF', exchangeRate = 1 }: { userId: string; currencyCode?: string; exchangeRate?: number }) {
   const [invitation, setInvitation] = useState<{ url: string; message: string } | null>(null);
 
   useEffect(() => {
@@ -48,7 +53,7 @@ function TelegramInvitePopup({ userId }: { userId: string }) {
     fetch('/api/support/settings')
       .then((response) => response.ok ? response.json() : null)
       .then((settings) => {
-        if (active && (settings?.telegramUrl || settings?.telegramPopupMessage)) setInvitation({ url: settings.telegramUrl ?? '', message: settings.telegramPopupMessage || 'Join our Telegram group for updates and support.' });
+        if (active && (settings?.telegramUrl || settings?.telegramPopupMessage)) setInvitation({ url: settings.telegramUrl ?? '', message: localizeAmounts(settings.telegramPopupMessage || 'Join our Telegram group for updates and support.', currencyCode, exchangeRate) });
       })
       .catch(() => undefined);
     return () => { active = false; };
@@ -152,6 +157,6 @@ export default function App() {
     : page;
   if (isAuthRoute || !authLoaded || !authUser) return <FluentProvider theme={theme} className="fluent-app">{renderedPage}</FluentProvider>;
   if (isAdminPath) return <FluentProvider theme={theme} className={authUser.role === 'ADMIN' ? 'fluent-app admin-console-provider' : 'fluent-app'}>{renderedPage}</FluentProvider>;
-  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}>{renderedPage}</AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} />}</FluentProvider>;
+  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}>{renderedPage}</AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} />}</FluentProvider>;
 }
 
