@@ -251,9 +251,9 @@ function transactionView(row: Record<string, any>, currency: { countryCode: stri
   const unitsPerRwf = Number(row.exchange_rate ?? currency.unitsPerRwf);
   return {
     id: row.id, userId: row.user_id, type: row.type, amount: Number(row.amount), withdrawalFee: Number(row.withdrawal_fee ?? 0), amountReceived: Number(row.amount_received ?? 0),
-    displayAmount: row.display_amount || convertRwfToLocal(Number(row.amount), unitsPerRwf),
-    displayFee: row.display_fee ?? convertRwfToLocal(Number(row.withdrawal_fee ?? 0), unitsPerRwf),
-    displayAmountReceived: row.display_amount_received ?? convertRwfToLocal(Number(row.amount_received ?? 0), unitsPerRwf),
+    displayAmount: Number(row.display_amount) || convertRwfToLocal(Number(row.amount), unitsPerRwf),
+    displayFee: Number(row.display_fee) || convertRwfToLocal(Number(row.withdrawal_fee ?? 0), unitsPerRwf),
+    displayAmountReceived: Number(row.display_amount_received) || convertRwfToLocal(Number(row.amount_received ?? 0), unitsPerRwf),
     countryCode: row.country_code ?? currency.countryCode, currencyCode: row.currency_code ?? currency.currencyCode, exchangeRate: unitsPerRwf,
     commissionAmount: Number(row.commission_amount ?? 0), senderName: row.sender_name, receiverName: row.receiver_name, phoneNumber: maskPhone(row.phone_number),
     paymentMethod: row.payment_method, depositMethodId: row.deposit_method_id ?? null, depositMethodName: row.deposit_method_name ?? null,
