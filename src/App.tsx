@@ -48,7 +48,7 @@ function TelegramInvitePopup({ userId }: { userId: string }) {
     fetch('/api/support/settings')
       .then((response) => response.ok ? response.json() : null)
       .then((settings) => {
-        if (active && settings?.telegramUrl) setInvitation({ url: settings.telegramUrl, message: settings.telegramPopupMessage || 'Join our Telegram group for updates and support.' });
+        if (active && (settings?.telegramUrl || settings?.telegramPopupMessage)) setInvitation({ url: settings.telegramUrl ?? '', message: settings.telegramPopupMessage || 'Join our Telegram group for updates and support.' });
       })
       .catch(() => undefined);
     return () => { active = false; };
@@ -60,7 +60,7 @@ function TelegramInvitePopup({ userId }: { userId: string }) {
   };
 
   if (!invitation) return null;
-  return <div className="telegram-invite-backdrop"><section className="telegram-invite" role="dialog" aria-modal="true" aria-labelledby="telegram-invite-title"><span className="telegram-invite__eyebrow">COMMUNITY</span><h2 id="telegram-invite-title">Join our Telegram group</h2><p>{invitation.message}</p><div className="telegram-invite__actions"><a href={invitation.url} target="_blank" rel="noreferrer" onClick={dismiss}>Join</a><button type="button" onClick={dismiss}>Not now</button></div></section></div>;
+  return <div className="telegram-invite-backdrop"><section className="telegram-invite" role="dialog" aria-modal="true" aria-labelledby="telegram-invite-title"><span className="telegram-invite__eyebrow">COMMUNITY</span><h2 id="telegram-invite-title">Join our Telegram group</h2><p>{invitation.message}</p><div className="telegram-invite__actions">{invitation.url && <a href={invitation.url} target="_blank" rel="noreferrer" onClick={dismiss}>Join</a>}<button type="button" onClick={dismiss}>Not now</button></div></section></div>;
 }
 
 export default function App() {
@@ -131,7 +131,7 @@ export default function App() {
   }, [path, authLoaded, authUser?.id]);
   const theme = useMemo(() => dark ? createDarkTheme(brandRamp) : createLightTheme(brandRamp), [dark]);
   const retry = () => setReloadToken((value) => value + 1);
-  const authenticate = (user: AuthUser) => { const destination = user.role === 'ADMIN' ? '/admin' : '/'; setAuthUser(user); setAccessUser(user); setPath(destination); window.history.replaceState({}, '', destination); };
+  const authenticate = (user: AuthUser) => { Object.keys(sessionStorage).filter((key) => key.startsWith('telegram-invite-dismissed:')).forEach((key) => sessionStorage.removeItem(key)); const destination = user.role === 'ADMIN' ? '/admin' : '/'; setAuthUser(user); setAccessUser(user); setPath(destination); window.history.replaceState({}, '', destination); };
   const refreshProducts = (updatedPlan: Plan) => setData((current) => current ? { ...current, plans: current.plans.map((plan) => plan.id === updatedPlan.id ? updatedPlan : plan) } : current);
   const logout = async () => { try { await api.logout(); } finally { Object.keys(sessionStorage).filter((key) => key.startsWith('telegram-invite-dismissed:')).forEach((key) => sessionStorage.removeItem(key)); setAuthUser(null); setPath('/login'); window.history.replaceState({}, '', '/login'); } };
   const isAuthRoute = path === '/login' || path === '/register';
