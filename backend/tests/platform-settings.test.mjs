@@ -204,7 +204,7 @@ test('central settings award one global welcome bonus and snapshot configured wi
   assert.equal(rejected.body.transaction.withdrawalFee, 500);
   assert.equal(rejected.body.transaction.amountReceived, 9500);
   const approved = await request(`/api/admin/transactions/${second.body.transaction.id}/approve`, { method: 'POST' }, adminCookie);
-  assert.equal(approved.body.transaction.status, 'AWAITING_PAYOUT');
+  assert.equal(approved.body.transaction.status, 'SUCCESS');
   assert.equal(approved.body.transaction.withdrawalFee, 300);
 
   const fixedSettings = { ...changedSettings, withdrawalFeeType: 'FIXED', withdrawalFeeValue: 250 };

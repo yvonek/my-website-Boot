@@ -1290,9 +1290,10 @@ export default {
             await walletAudit(client, transactionId, user.id, approve ? 'DEPOSIT_APPROVED' : 'DEPOSIT_REJECTED', 'PENDING', nextStatus, reason || null);
           } else {
             const reserved = Number(row.reserved_amount) || Number(row.amount) + Number(row.withdrawal_fee ?? 0);
-            const nextStatus = approve ? 'AWAITING_PAYOUT' : 'REJECTED';
-            await client.query('UPDATE wallet_transactions SET status = $1, approved_by = $2, approved_at = $3, rejected_by = $4, rejected_at = $5, rejection_reason = $6, updated_at = $7 WHERE id = $8',
-              [nextStatus, approve ? user.id : null, approve ? timestamp : null, approve ? null : user.id, approve ? null : timestamp, approve ? null : reason, timestamp, transactionId]);
+            const nextStatus = approve ? 'SUCCESS' : 'REJECTED';
+            await client.query('UPDATE wallet_transactions SET status = $1, approved_by = $2, approved_at = $3, rejected_by = $4, rejected_at = $5, rejection_reason = $6, updated_at = $7, completed_at = $9 WHERE id = $8',
+              [nextStatus, approve ? user.id : null, approve ? timestamp : null, approve ? null : user.id, approve ? null : timestamp, approve ? null : reason, timestamp, transactionId, approve ? timestamp : null]);
+            if (approve) await client.query('UPDATE wallet_accounts SET reserved_balance = reserved_balance - $1, updated_at = $2 WHERE user_id = $3 AND reserved_balance >= $1', [reserved, timestamp, row.user_id]);
             if (!approve) await client.query('UPDATE wallet_accounts SET reserved_balance = reserved_balance - $1, available_balance = available_balance + $1, updated_at = $2 WHERE user_id = $3 AND reserved_balance >= $1', [reserved, timestamp, row.user_id]);
             await walletAudit(client, transactionId, user.id, approve ? 'WITHDRAWAL_APPROVED' : 'WITHDRAWAL_REJECTED', 'PENDING', nextStatus, reason || null);
           }
