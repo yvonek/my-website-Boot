@@ -19,14 +19,14 @@ body { min-width: 320px; background: var(--surface-sunken); }
 button { font-family: inherit; }
 .fluent-app { min-height: 100vh; background: linear-gradient(135deg, rgba(10, 25, 30, .96), rgba(16, 26, 34, .93)), url('https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=1800&q=80') center / cover fixed; color: var(--text); }
 .telegram-invite-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; align-content: start; justify-items: center; padding: min(14vh, 96px) 16px 20px; background: rgba(5, 12, 16, .48); backdrop-filter: blur(3px); }
-.telegram-invite { display: grid; gap: 9px; width: min(100%, 520px); padding: 20px; border: 1px solid rgba(255, 255, 255, .35); border-radius: 14px; color: #14231f; background: rgba(255, 255, 255, .55); backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3); box-shadow: 0 18px 48px rgba(0, 0, 0, .24); animation: telegram-invite-enter .18s ease-out; }
+.telegram-invite { display: grid; gap: 9px; width: min(100%, 520px); padding: 20px; border: 1px solid rgba(255, 255, 255, .35); border-radius: 14px; color: #14231f; background: rgba(255, 255, 255, .78); backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3); box-shadow: 0 18px 48px rgba(0, 0, 0, .24); animation: telegram-invite-enter .18s ease-out; }
 .telegram-invite__eyebrow { color: #26765c; font-size: 10px; font-weight: 750; }
 .telegram-invite h2 { margin: 0; color: #14231f; font-size: 18px; line-height: 1.25; }
-.telegram-invite p { margin: 0; color: #22332e; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
+.telegram-invite p { margin: 0; color: #0b1713; font-size: 16px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-line; text-shadow: 0 0 1px rgba(255, 255, 255, .8); }
 .telegram-invite__actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; margin-top: 3px; }
-.telegram-invite__actions button { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 0 12px; border: 1px solid rgba(27, 101, 77, .35); border-radius: 7px; color: #1b654d; background: rgba(241, 250, 246, .6); font: inherit; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; }
-.telegram-invite__actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 0 12px; border: 1px solid rgba(27, 101, 77, .35); border-radius: 7px; color: #1b654d; background: rgba(241, 250, 246, .6); font: inherit; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; }
-.telegram-invite__actions button { color: #3d4d48; background: rgba(255, 255, 255, .5); }
+.telegram-invite__actions button { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 14px; border: 1px solid #0e4d39; border-radius: 7px; color: #fff; background: #1b7a58; font: inherit; font-size: 13px; font-weight: 800; text-decoration: none; cursor: pointer; }
+.telegram-invite__actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 14px; border: 1px solid #0e4d39; border-radius: 7px; color: #fff; background: #1b7a58; font: inherit; font-size: 13px; font-weight: 800; text-decoration: none; cursor: pointer; }
+.telegram-invite__actions button { color: #14231f; background: #fff; border-color: #14231f; }
 @keyframes telegram-invite-enter { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 680px) {
   .withdrawal-modal__backdrop { place-items: center; padding: 12px; }
