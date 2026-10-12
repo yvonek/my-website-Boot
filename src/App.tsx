@@ -43,7 +43,7 @@ function TelegramInvitePopup({ userId }: { userId: string }) {
 
   useEffect(() => {
     const storageKey = `telegram-invite-dismissed:${userId}`;
-    if (localStorage.getItem(storageKey)) return;
+    if (sessionStorage.getItem(storageKey)) return;
     let active = true;
     fetch('/api/support/settings')
       .then((response) => response.ok ? response.json() : null)
@@ -55,7 +55,7 @@ function TelegramInvitePopup({ userId }: { userId: string }) {
   }, [userId]);
 
   const dismiss = () => {
-    localStorage.setItem(`telegram-invite-dismissed:${userId}`, '1');
+    sessionStorage.setItem(`telegram-invite-dismissed:${userId}`, '1');
     setInvitation(null);
   };
 
@@ -133,7 +133,7 @@ export default function App() {
   const retry = () => setReloadToken((value) => value + 1);
   const authenticate = (user: AuthUser) => { const destination = user.role === 'ADMIN' ? '/admin' : '/'; setAuthUser(user); setAccessUser(user); setPath(destination); window.history.replaceState({}, '', destination); };
   const refreshProducts = (updatedPlan: Plan) => setData((current) => current ? { ...current, plans: current.plans.map((plan) => plan.id === updatedPlan.id ? updatedPlan : plan) } : current);
-  const logout = async () => { try { await api.logout(); } finally { setAuthUser(null); setPath('/login'); window.history.replaceState({}, '', '/login'); } };
+  const logout = async () => { try { await api.logout(); } finally { Object.keys(sessionStorage).filter((key) => key.startsWith('telegram-invite-dismissed:')).forEach((key) => sessionStorage.removeItem(key)); setAuthUser(null); setPath('/login'); window.history.replaceState({}, '', '/login'); } };
   const isAuthRoute = path === '/login' || path === '/register';
   useEffect(() => { if (!authLoaded) return; if (!authUser && !isAuthRoute) { setPath('/login'); window.history.replaceState({}, '', '/login'); } else if (authUser && isAuthRoute) { const destination = authUser.role === 'ADMIN' ? '/admin' : '/'; setPath(destination); window.history.replaceState({}, '', destination); } }, [authLoaded, authUser, isAuthRoute]);
   const guardedFeature = path === '/plans' ? 'products' : path === '/wallet' ? 'wallet' : path === '/deposit' ? 'deposit' : path === '/withdraw' ? 'withdraw' : path === '/team' || path === '/invite' ? 'myTeam' : path === '/support' ? 'support' : path === '/messages' ? 'messages' : path === '/' ? 'dashboard' : null;

@@ -182,7 +182,7 @@ describe('Telegram group invitation', () => {
   it('shows the configured popup once and remembers dismissal per user', async () => {
     window.history.replaceState({}, '', '/');
     const user = { id: 'telegram-user', fullName: 'Telegram User', phoneNumber: '+250780000009', referralCode: 'TELEGRAM1', role: 'USER' as const };
-    localStorage.removeItem('telegram-invite-dismissed:telegram-user');
+    sessionStorage.removeItem('telegram-invite-dismissed:telegram-user');
     const fetchRequest = vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), window.location.href).pathname;
       const body = path === '/api/auth/me'
@@ -204,7 +204,7 @@ describe('Telegram group invitation', () => {
     expect(screen.getByText('Short community updates.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
     expect(screen.queryByRole('dialog', { name: 'Join our Telegram group' })).not.toBeInTheDocument();
-    expect(localStorage.getItem('telegram-invite-dismissed:telegram-user')).toBe('1');
+    expect(sessionStorage.getItem('telegram-invite-dismissed:telegram-user')).toBe('1');
   });
 });
 
