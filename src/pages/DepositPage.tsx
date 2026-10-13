@@ -31,7 +31,7 @@ import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { TransactionHistory } from '../components/TransactionHistory';
 import { api } from '../api';
-import { convertCurrencyAmount, formatCurrencyAmount, isValidCountryPhone, usdtAmount } from '../api/money';
+import { applyUsdtFee, convertCurrencyAmount, formatCurrencyAmount, isValidCountryPhone, usdtAmount } from '../api/money';
 import type { DepositPaymentMethod, WalletTransaction } from '../api/types';
 
 const maxScreenshotBytes = 4 * 1024 * 1024;
@@ -77,7 +77,7 @@ export function DepositPage() {
   const amountIsValid = Boolean(selectedMethod && Number.isSafeInteger(numericAmount) && numericAmount >= selectedMethod.minimumAmount && numericAmount <= selectedMethod.maximumAmount);
   const receivingCurrencyCode = selectedMethod?.receivingCurrencyCode ?? currencyCode;
   const isCryptoMethod = selectedMethod?.cryptoNetwork === 'TRC20';
-  const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? usdtAmount(numericAmount, Number(selectedMethod.unitsPerUsdt ?? 0)) : convertCurrencyAmount(numericAmount, selectedMethod.customerUnitsPerRwf ?? 1, selectedMethod.receivingUnitsPerRwf ?? selectedMethod.customerUnitsPerRwf ?? 1)) : 0;
+  const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? applyUsdtFee(usdtAmount(numericAmount, Number(selectedMethod.unitsPerUsdt ?? 0)), Number(selectedMethod.usdtFeePercent ?? 0), 'deposit') : convertCurrencyAmount(numericAmount, selectedMethod.customerUnitsPerRwf ?? 1, selectedMethod.receivingUnitsPerRwf ?? selectedMethod.customerUnitsPerRwf ?? 1)) : 0;
   const paymentLabel = isCryptoMethod ? `${paymentAmount.toFixed(2)} USDT` : formatCurrencyAmount(paymentAmount, receivingCurrencyCode);
   const ussdCode = selectedMethod?.ussdTemplate && amountIsValid ? buildUssd(selectedMethod.ussdTemplate, selectedMethod.accountNumber, paymentAmount) : '';
   const copyValue = async (value: string, label: string) => {

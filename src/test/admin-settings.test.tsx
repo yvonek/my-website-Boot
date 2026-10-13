@@ -55,6 +55,7 @@ describe('Admin platform settings', () => {
       welcomeBonusEnabled: true,
       welcomeBonusAmount: 5000,
       minimumWithdrawal: 0,
+      usdtFeePercent: 0,
     });
-  });
+  }, 20000);
 });

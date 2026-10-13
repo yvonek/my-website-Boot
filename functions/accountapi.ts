@@ -37,6 +37,11 @@ function localAmount(amount: number, unitsPerRwf: number) {
 function usdtAmount(amountRwf: number, unitsPerRwf: number, unitsPerUsdt: number) {
   return Math.round((localAmount(amountRwf, unitsPerRwf) / unitsPerUsdt) * 100) / 100;
 }
+// Admin USDT fee: deposits pay more USDT, withdrawals send less USDT.
+function usdtWithFee(usdt: number, feePercent: number, direction: 'deposit' | 'withdrawal') {
+  const factor = direction === 'deposit' ? 1 + feePercent / 100 : 1 - feePercent / 100;
+  return Math.max(0, Math.round(usdt * factor * 100) / 100);
+}
 const cryptoMethod = 'USDT_TRC20';
 const cryptoNetworkTrc20 = 'TRC20';
 const trc20AddressPattern = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
@@ -305,13 +310,14 @@ async function depositMethodView(row: Record<string, any>, currency: { currencyC
 }
 
 async function platformSettings() {
-  const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('withdrawal_fee_enabled','withdrawal_fee_type','withdrawal_fee_value','welcome_bonus_enabled','welcome_bonus_amount','minimum_withdrawal_amount')");
+  const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('withdrawal_fee_enabled','withdrawal_fee_type','withdrawal_fee_value','welcome_bonus_enabled','welcome_bonus_amount','minimum_withdrawal_amount','usdt_fee_percent')");
   const read = Object.fromEntries(result.rows.map((row) => [row.key, row.value])) as Record<string, string | undefined>;
   const withdrawalFeeType = read.withdrawal_fee_type === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
   return {
     withdrawalFeeEnabled: read.withdrawal_fee_enabled === '1', withdrawalFeeType,
     withdrawalFeeValue: Number(read.withdrawal_fee_value ?? 0), welcomeBonusEnabled: read.welcome_bonus_enabled === '1', welcomeBonusAmount: Number(read.welcome_bonus_amount ?? 0),
     minimumWithdrawal: Number(read.minimum_withdrawal_amount ?? 0),
+    usdtFeePercent: Number(read.usdt_fee_percent ?? 0),
   };
 }
 
@@ -1081,9 +1087,11 @@ export default {
         const welcomeAmount = Number(input.welcomeBonusAmount);
         const minimumWithdrawal = Number(input.minimumWithdrawal ?? 0);
         if (!Number.isSafeInteger(minimumWithdrawal) || minimumWithdrawal < 0) return json({ error: 'Enter a valid minimum withdrawal amount.' }, 400);
+        const usdtFeePercent = Number(input.usdtFeePercent);
+        if (!Number.isFinite(usdtFeePercent) || usdtFeePercent < 0 || usdtFeePercent >= 100) return json({ error: 'Enter a valid USDT fee percentage (0 to 99.99).' }, 400);
         if (typeof input.withdrawalFeeEnabled !== 'boolean' || !['PERCENTAGE', 'FIXED'].includes(String(feeType)) || !Number.isFinite(feeValue) || feeValue < 0 || (feeType === 'PERCENTAGE' && feeValue > 100) || (feeType === 'FIXED' && !Number.isSafeInteger(feeValue))) return json({ error: 'Enter a valid withdrawal fee type and value.' }, 400);
         if (typeof input.welcomeBonusEnabled !== 'boolean' || !Number.isSafeInteger(welcomeAmount) || welcomeAmount < 0) return json({ error: 'Enter a valid welcome bonus amount.' }, 400);
-        const values = { withdrawal_fee_enabled: input.withdrawalFeeEnabled ? '1' : '0', withdrawal_fee_type: String(feeType), withdrawal_fee_value: String(feeValue), welcome_bonus_enabled: input.welcomeBonusEnabled ? '1' : '0', welcome_bonus_amount: String(welcomeAmount), minimum_withdrawal_amount: String(minimumWithdrawal) };
+        const values = { withdrawal_fee_enabled: input.withdrawalFeeEnabled ? '1' : '0', withdrawal_fee_type: String(feeType), withdrawal_fee_value: String(feeValue), welcome_bonus_enabled: input.welcomeBonusEnabled ? '1' : '0', welcome_bonus_amount: String(welcomeAmount), minimum_withdrawal_amount: String(minimumWithdrawal), usdt_fee_percent: String(usdtFeePercent) };
         for (const [key, value] of Object.entries(values)) {
           await pool.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', [key, value, now()]);
         }
@@ -1100,7 +1108,8 @@ export default {
       if ((path === '/api/deposit-methods' || path === '/api/wallet/deposit/methods') && method === 'GET') {
         const currency = await currencyForUser(user.id);
         const rows = await pool.query(`SELECT d.* FROM deposit_methods d WHERE d.country_code = $1 AND ${depositMethodFilter} ORDER BY d.position, d.name`, [currency.countryCode]);
-        return json({ methods: await Promise.all(rows.rows.map((row) => depositMethodView(row, currency))), currencyCode: currency.currencyCode });
+        const { usdtFeePercent } = await platformSettings();
+        return json({ methods: await Promise.all(rows.rows.map(async (row) => ({ ...(await depositMethodView(row, currency)), usdtFeePercent }))), currencyCode: currency.currencyCode });
       }
 
       if (path === '/api/wallet/withdraw/methods' && method === 'GET') {
@@ -1213,7 +1222,8 @@ export default {
         const isCrypto = depositMethod.crypto_network === cryptoNetworkTrc20;
         const receiving = isCrypto ? { countryCode: user.countryCode, currencyCode: 'USDT' } : await countrySettings(depositMethod.receiving_country_code ?? user.countryCode);
         const receivingRate = isCrypto ? Number(user.unitsPerUsdt) : Number(receiving?.unitsPerRwf);
-        const paymentAmount = receiving && receivingRate > 0 ? (isCrypto ? usdtAmount(amount, user.unitsPerRwf, receivingRate) : localAmount(amount, receivingRate)) : 0;
+        const usdtFeePercent = isCrypto ? (await platformSettings()).usdtFeePercent : 0;
+        const paymentAmount = receiving && receivingRate > 0 ? (isCrypto ? usdtWithFee(usdtAmount(amount, user.unitsPerRwf, receivingRate), usdtFeePercent, 'deposit') : localAmount(amount, receivingRate)) : 0;
         if (!receiving || receivingRate <= 0 || paymentAmount <= 0) return json({ error: 'The receiving payment account does not have a valid exchange rate.' }, 400);
         const id = randomUUID();
         const timestamp = now();
@@ -1238,13 +1248,15 @@ export default {
           return json({ error: 'Your bound withdrawal account is invalid or its provider is unavailable in your country.' }, 400);
         }
         const calculation = await withdrawalFee(amount);
+        const usdtFeePercent = isCrypto ? (await platformSettings()).usdtFeePercent : 0;
+        const cryptoWithdrawalAmount = isCrypto ? usdtWithFee(usdtAmount(calculation.amountReceived, user.unitsPerRwf, Number(user.unitsPerUsdt)), usdtFeePercent, 'withdrawal') : null;
         const minimumWithdrawal = (await platformSettings()).minimumWithdrawal;
         if (amount < minimumWithdrawal) return json({ error: `Minimum withdrawal is ${localAmount(minimumWithdrawal, user.unitsPerRwf).toLocaleString()} ${user.currencyCode}.` }, 400);
         const balance = await balanceView(user.id);
         if (amount > balance.availableBalance) return json({ error: 'Withdrawal amount exceeds available balance.' }, 400);
         if (withdrawalRoute === 'preview') {
           return json({
-            channel: isCrypto ? 'USDT (TRC20)' : account.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'MTN MoMo', receiverName: account.accountHolderName, phoneNumber: account.phoneNumber, paymentMethod: account.paymentMethod, walletAddress: account.walletAddress ?? '', cryptoAmount: isCrypto ? usdtAmount(calculation.amountReceived, user.unitsPerRwf, Number(user.unitsPerUsdt)) : null, cryptoUnitsPerUsdt: isCrypto ? Number(user.unitsPerUsdt) : null,
+            channel: isCrypto ? 'USDT (TRC20)' : account.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'MTN MoMo', receiverName: account.accountHolderName, phoneNumber: account.phoneNumber, paymentMethod: account.paymentMethod, walletAddress: account.walletAddress ?? '', cryptoAmount: cryptoWithdrawalAmount, cryptoUnitsPerUsdt: isCrypto ? Number(user.unitsPerUsdt) : null,
             availableBalance: balance.availableBalance, displayAvailableBalance: balance.displayAvailableBalance, displayWithdrawalAmount: displayAmount,
             displayWithdrawalFee: localAmount(calculation.withdrawalFee, user.unitsPerRwf), displayAmountReceived: localAmount(calculation.amountReceived, user.unitsPerRwf), currencyCode: user.currencyCode, ...calculation,
           });
@@ -1261,7 +1273,7 @@ export default {
           await client.query('UPDATE wallet_accounts SET available_balance = available_balance - $1, reserved_balance = reserved_balance + $1, updated_at = $2 WHERE user_id = $3', [amount, timestamp, user.id]);
           await client.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, withdrawal_fee, amount_received, reserved_amount, commission_amount, sender_name, receiver_name, phone_number, payment_method, status, provider, internal_reference, crypto_network, crypto_amount, crypto_units_per_usdt, crypto_address, created_at, updated_at)
             VALUES ($1,$2,'WITHDRAWAL',$3,$4,$5,$6,$7,'',$8,$9,$10,'PENDING','ADMIN_REVIEW',$11,$12,$13,$14,$15,$16,$16)`,
-          [id, user.id, amount, calculation.withdrawalFee, calculation.amountReceived, amount, commissionAmount, account.accountHolderName, account.phoneNumber, account.paymentMethod, `WDR-${randomUUID()}`, isCrypto ? cryptoNetworkTrc20 : '', isCrypto ? usdtAmount(calculation.amountReceived, user.unitsPerRwf, Number(user.unitsPerUsdt)) : null, isCrypto ? Number(user.unitsPerUsdt) : null, isCrypto ? account.walletAddress : null, timestamp]);
+          [id, user.id, amount, calculation.withdrawalFee, calculation.amountReceived, amount, commissionAmount, account.accountHolderName, account.phoneNumber, account.paymentMethod, `WDR-${randomUUID()}`, isCrypto ? cryptoNetworkTrc20 : '', cryptoWithdrawalAmount, isCrypto ? Number(user.unitsPerUsdt) : null, isCrypto ? account.walletAddress : null, timestamp]);
         });
         const created = await pool.query('SELECT * FROM wallet_transactions WHERE id = $1', [id]);
         return json({ transaction: transactionView(created.rows[0], user) }, 201);

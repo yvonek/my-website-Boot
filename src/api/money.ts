@@ -22,6 +22,14 @@ export function usdtAmount(localAmount: number, unitsPerUsdt: number) {
   return Math.round((Number(localAmount) / unitsPerUsdt) * 100) / 100;
 }
 
+// Admin USDT fee: deposits pay more USDT, withdrawals send less USDT.
+export function applyUsdtFee(usdt: number, feePercent: number, direction: 'deposit' | 'withdrawal') {
+  if (!Number.isFinite(usdt)) return 0;
+  const pct = Number.isFinite(feePercent) ? feePercent : 0;
+  const factor = direction === 'deposit' ? 1 + pct / 100 : 1 - pct / 100;
+  return Math.max(0, Math.round(usdt * factor * 100) / 100);
+}
+
 export function convertCurrencyAmount(amount: number, sourceUnitsPerRwf: number, targetUnitsPerRwf: number) {
   if (!Number.isFinite(sourceUnitsPerRwf) || sourceUnitsPerRwf <= 0 || !Number.isFinite(targetUnitsPerRwf) || targetUnitsPerRwf <= 0) throw new Error('Positive exchange rates are required.');
   return Math.round(Math.round(Number(amount) / sourceUnitsPerRwf) * targetUnitsPerRwf);
