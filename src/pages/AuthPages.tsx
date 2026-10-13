@@ -11,6 +11,24 @@ const fallbackAuthCountries: AuthCountryOption[] = [
   { countryCode: 'BI', countryName: 'Burundi', phonePrefix: '+257', currencyCode: 'BIF', enabled: true },
   { countryCode: 'UG', countryName: 'Uganda', phonePrefix: '+256', currencyCode: 'UGX', enabled: true },
 ];
+const currencyByCountry: Record<CountryCode, AuthCountryOption['currencyCode']> = { RW: 'RWF', BI: 'BIF', UG: 'UGX' };
+
+function isAuthCountryOption(value: unknown): value is AuthCountryOption {
+  if (typeof value !== 'object' || value === null) return false;
+  const country = value as Record<string, unknown>;
+  const code = country.countryCode;
+  return (code === 'RW' || code === 'BI' || code === 'UG')
+    && country.currencyCode === currencyByCountry[code]
+    && typeof country.countryName === 'string' && country.countryName.trim().length > 0
+    && typeof country.phonePrefix === 'string' && /^\+\d+$/.test(country.phonePrefix)
+    && typeof country.enabled === 'boolean';
+}
+
+function responseError(body: unknown) {
+  return typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+    ? body.error
+    : 'Countries could not be loaded.';
+}
 
 function useAuthCountries(mode: 'register' | 'login') {
   const [countries, setCountries] = useState<AuthCountryOption[]>([]);
@@ -21,11 +39,16 @@ function useAuthCountries(mode: 'register' | 'login') {
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/public/countries?mode=${mode}`).then(async (response) => {
-      const body = await response.json() as { countries: AuthCountryOption[]; error?: string };
-      if (!response.ok) throw new Error(body.error ?? 'Countries could not be loaded.');
+      const body: unknown = await response.json();
+      if (!response.ok) throw new Error(responseError(body));
+      const rawCountries = typeof body === 'object' && body !== null && 'countries' in body && Array.isArray(body.countries)
+        ? body.countries
+        : [];
+      const validCountries = rawCountries.filter(isAuthCountryOption);
+      if (!validCountries.length) throw new Error('No valid country data was returned.');
       if (cancelled) return;
-      setCountries(body.countries);
-      setSelectedCountry((current) => body.countries.some((country) => country.countryCode === current) ? current : body.countries[0]?.countryCode ?? 'RW');
+      setCountries(validCountries);
+      setSelectedCountry((current) => validCountries.some((country) => country.countryCode === current) ? current : validCountries[0].countryCode);
     }).catch(() => {
       if (cancelled) return;
       setCountries(fallbackAuthCountries);

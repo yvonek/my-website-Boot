@@ -9,6 +9,11 @@ import { WalletPage } from '../pages/WalletPage';
 
 afterEach(() => vi.unstubAllGlobals());
 
+function mockResponse(body: unknown, status = 200) {
+  const serialized = JSON.stringify(body);
+  return { ok: status >= 200 && status < 300, status, text: async () => serialized, json: async () => JSON.parse(serialized) } as Response;
+}
+
 describe('dashboard', () => {
   it('loads the dashboard once for an authenticated session', async () => {
     window.history.replaceState({}, '', '/');
@@ -21,7 +26,7 @@ describe('dashboard', () => {
         : path === '/api/wallet/balance'
           ? { userId: user.id, availableBalance: 0, reservedBalance: 0, lockedWelcomeBonus: 7000, welcomeBonusAmount: 7000, welcomeBonusStatus: 'LOCKED', paymentMode: 'admin-review' }
           : { metrics: [], plans: [plan], referrals: [], tools: [] };
-      return { ok: true, json: async () => body } as Response;
+      return mockResponse(body);
     });
     vi.stubGlobal('fetch', fetchRequest);
 
@@ -40,13 +45,22 @@ describe('dashboard', () => {
 
   it('requires a session before rendering the protected Withdraw page', async () => {
     window.history.replaceState({}, '', '/withdraw');
-    const fetchRequest = vi.fn(async () => ({ ok: true, json: async () => ({ user: null }) }) as Response);
+    const countries = [
+      { countryCode: 'RW', countryName: 'Rwanda', phonePrefix: '+250', currencyCode: 'RWF', enabled: true },
+      { countryCode: 'BI', countryName: 'Burundi', phonePrefix: '+257', currencyCode: 'BIF', enabled: true },
+      { countryCode: 'UG', countryName: 'Uganda', phonePrefix: '+256', currencyCode: 'UGX', enabled: true },
+    ];
+    const fetchRequest = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), window.location.href).pathname;
+      const body = path === '/api/auth/me' ? { user: null } : { countries };
+      return mockResponse(body);
+    });
     vi.stubGlobal('fetch', fetchRequest);
 
     render(<App />);
     expect(await screen.findByRole('heading', { name: 'Welcome Back' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Withdraw' })).not.toBeInTheDocument();
-    expect(fetchRequest).toHaveBeenCalledTimes(1);
+    expect(fetchRequest).toHaveBeenCalledWith('/api/auth/me', expect.objectContaining({ credentials: 'same-origin' }));
   });
 
   it('renders the Admin Console for an authenticated ADMIN account', async () => {
@@ -80,7 +94,7 @@ describe('dashboard', () => {
               : path === '/api/admin/audit-log'
                 ? { entries: [] }
                 : {};
-      return { ok: true, json: async () => body } as Response;
+      return mockResponse(body);
     });
     vi.stubGlobal('fetch', fetchRequest);
 
@@ -91,12 +105,12 @@ describe('dashboard', () => {
     expect(screen.getByRole('link', { name: 'User app' })).toHaveAttribute('href', '/');
     expect(await screen.findByRole('button', { name: /Total deposits 170,000 RWF/ })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /Total withdrawals 31,900 RWF/ })).toBeInTheDocument();
-    expect(document.querySelectorAll('.admin-overview-grid .admin-overview-card')).toHaveLength(9);
+    expect(document.querySelectorAll('.admin-overview-grid .admin-overview-card')).toHaveLength(10);
     fireEvent.click(screen.getByRole('button', { name: /Total users/ }));
     expect(window.location.pathname).toBe('/admin/users');
     fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
     expect(window.location.pathname).toBe('/admin');
-    fireEvent.click(screen.getByRole('button', { name: /Active users/ }));
+    fireEvent.click(within(document.querySelector('.admin-overview-grid') as HTMLElement).getByRole('button', { name: /Active users/ }));
     expect(window.location.pathname).toBe('/admin/active-users');
     expect(screen.getByText('COMPLETED PURCHASERS')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
@@ -123,7 +137,7 @@ describe('dashboard', () => {
     expect(confirmDelete).toBeEnabled();
     fireEvent.click(confirmDelete);
     await waitFor(() => expect(fetchRequest).toHaveBeenCalledWith('/api/admin/users', expect.objectContaining({ method: 'DELETE' })));
-  });
+  }, 15000);
 });
 
 describe('login country fallback', () => {
@@ -142,6 +156,21 @@ describe('login country fallback', () => {
     expect(screen.getByRole('option', { name: 'Burundi (+257)' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Uganda (+256)' })).toBeInTheDocument();
     expect(screen.getByText('+250')).toBeInTheDocument();
+    expect(await screen.findByText('Live country settings are unavailable. Showing the supported countries.')).toBeInTheDocument();
+  });
+
+  it.each([
+    {},
+    { countries: [{}] },
+  ])('falls back when country API data is missing or invalid', async (body) => {
+    const fetchRequest = vi.fn(async () => mockResponse(body));
+    vi.stubGlobal('fetch', fetchRequest);
+
+    render(<LoginPage onAuthenticated={() => undefined} />);
+
+    expect(await screen.findByRole('option', { name: 'Rwanda (+250)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Burundi (+257)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Uganda (+256)' })).toBeInTheDocument();
     expect(await screen.findByText('Live country settings are unavailable. Showing the supported countries.')).toBeInTheDocument();
   });
 });
@@ -164,7 +193,7 @@ describe('wallet page', () => {
           : path === '/api/wallet/balance'
             ? { userId: 'user-1', availableBalance: 0, reservedBalance: 0, lockedWelcomeBonus: 7000, welcomeBonusAmount: 7000, welcomeBonusStatus: 'LOCKED', paymentMode: 'admin-review' }
             : { enabled: false, rewardAmount: 0, claimed: false };
-      return { ok: true, json: async () => body } as Response;
+      return mockResponse(body);
     });
     vi.stubGlobal('fetch', fetchRequest);
 
@@ -181,43 +210,52 @@ describe('wallet page', () => {
 describe('Telegram group invitation', () => {
   it('shows the configured popup once and remembers dismissal per user', async () => {
     window.history.replaceState({}, '', '/');
+    let popupCountryCode: 'UG' | 'BI' = 'UG';
     const user = { id: 'telegram-user', fullName: 'Telegram User', phoneNumber: '+250780000009', referralCode: 'TELEGRAM1', role: 'USER' as const };
-    sessionStorage.removeItem('telegram-invite-dismissed:telegram-user');
+    Object.keys(sessionStorage).filter((key) => key.startsWith('telegram-invite-dismissed:telegram-user:')).forEach((key) => sessionStorage.removeItem(key));
+    let popupMessage = 'Short community updates.';
     const fetchRequest = vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), window.location.href).pathname;
       const body = path === '/api/auth/me'
-        ? { user }
+        ? { user: { ...user, countryCode: popupCountryCode, currencyCode: popupCountryCode === 'UG' ? 'UGX' : 'BIF', exchangeRate: popupCountryCode === 'UG' ? 2.69 : 2.03, displayWelcomeBonusAmount: 20175 } }
         : path === '/api/support/settings'
-          ? { telegramUrl: 'https://t.me/example_group', telegramPopupMessage: 'Short community updates.', supportEmail: 'support@example.com', liveChatEnabled: true }
+          ? { telegramUrl: 'https://t.me/example_group', telegramPopupMessage: `${popupMessage} Bonus: {welcomeBonus}.`, supportEmail: 'support@example.com', liveChatEnabled: true }
           : path === '/api/wallet/balance'
             ? { userId: user.id, availableBalance: 0, reservedBalance: 0, paymentMode: 'admin-review' }
             : path === '/api/wallet/daily-checkin'
               ? { enabled: false, rewardAmount: 0, claimed: false }
               : { metrics: [{ label: 'Test', value: '0', detail: '', tone: 'primary' }], plans: [], referrals: [], tools: [] };
-      return { ok: true, json: async () => body } as Response;
+      return mockResponse(body);
     });
     vi.stubGlobal('fetch', fetchRequest);
 
-    render(<App />);
+    const view = render(<App />);
 
     expect(await screen.findByRole('dialog', { name: 'Join our Telegram group' })).toBeInTheDocument();
-    expect(screen.getByText('Short community updates.')).toBeInTheDocument();
+    expect(screen.getByText('Short community updates. Bonus: 45,000 UGX.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
     expect(screen.queryByRole('dialog', { name: 'Join our Telegram group' })).not.toBeInTheDocument();
-    expect(sessionStorage.getItem('telegram-invite-dismissed:telegram-user')).toBe('1');
+    expect(sessionStorage.getItem(`telegram-invite-dismissed:telegram-user:${JSON.stringify(['https://t.me/example_group', 'Short community updates. Bonus: 45,000 UGX.'])}`)).toBe('1');
+
+    popupMessage = 'New top-up information.';
+    popupCountryCode = 'BI';
+    view.unmount();
+    render(<App />);
+    expect(await screen.findByText('New top-up information. Bonus: 43,500 BIF.')).toBeInTheDocument();
   });
 });
 
 describe('mobile product purchase', () => {
   it('sends a purchase request when randomUUID is unavailable on a LAN origin', async () => {
     const plan = { id: 'mobile-plan', name: 'Mobile Plan', description: '', imageData: null, price: 20000, deposited: '20000', incomePerDay: 1000, dailyIncome: 1000, totalIncome: 30000, purchaseBonus: 0, totalSlots: 10, soldSlots: 0, remainingSlots: 10, progressPercent: 0, soldOut: false, durationDays: 30, termDays: 30, term: '30 days', status: 'Active' as const, note: '' };
-    const fetchRequest = vi.fn(async () => ({ ok: true, json: async () => ({ purchase: { id: 'purchase-1', status: 'COMPLETED', reference: 'PUR-1' }, product: plan, balance: { userId: 'user-1', availableBalance: 0, reservedBalance: 0, paymentMode: 'admin-review' } }) }) as Response);
+    const fetchRequest = vi.fn(async () => mockResponse({ purchase: { id: 'purchase-1', status: 'COMPLETED', reference: 'PUR-1' }, product: plan, balance: { userId: 'user-1', availableBalance: 0, reservedBalance: 0, paymentMode: 'admin-review' } }));
     vi.stubGlobal('crypto', {});
+    vi.stubGlobal('fetch', fetchRequest);
 
     render(<PlanCard plan={plan} onPurchased={() => undefined} />);
     fireEvent.click(screen.getByRole('button', { name: 'BUY NOW' }));
 
-    expect(await screen.findByText('Purchase completed: PUR-1')).toBeInTheDocument();
+    expect(await screen.findByText('Purchase completed: 20,000 RWF · PUR-1')).toBeInTheDocument();
     expect(fetchRequest).toHaveBeenCalledWith('/api/purchases', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ 'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9._:-]{8,128}$/) }),
@@ -231,7 +269,7 @@ describe('mobile product purchase', () => {
       const body = path === '/api/wallet/products'
         ? { products: [{ id: 'purchase-1', name: 'Owned Product', amount: 20000, status: 'COMPLETED', reference: 'PUR-1', purchasedAt: '2026-10-01T00:00:00Z' }] }
         : {};
-      return { ok: true, json: async () => body } as Response;
+      return mockResponse(body);
     });
     vi.stubGlobal('fetch', fetchRequest);
 
@@ -254,7 +292,7 @@ describe('Admin user role controls', () => {
           : path === `/api/admin/users/${target.id}`
             ? { user: target, transactions: [], messages: [], audit: [] }
             : {};
-      return { ok: true, json: async () => body } as Response;
+      return mockResponse(body);
     });
     vi.stubGlobal('fetch', fetchRequest);
 

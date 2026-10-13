@@ -1913,3 +1913,135 @@
     transition-duration: .01ms !important;
   }
 }
+
+.admin-live-table-wrap,
+.admin-live-table-scroll {
+  min-width: 0;
+}
+
+.admin-live-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: rgba(19, 25, 21, .95);
+}
+
+.admin-console .admin-live-table-scroll .admin-promoter-table {
+  min-width: 720px;
+}
+
+.admin-live-users-page .admin-pagination {
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 7px;
+}
+
+.admin-live-users-page .admin-pagination > span {
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .admin-live-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .admin-live-table-scroll {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .admin-console .admin-live-table-scroll .admin-promoter-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border-collapse: separate;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    padding: 0 12px;
+    border: 1px solid var(--admin-border);
+    border-radius: 7px;
+    background: rgba(27, 34, 29, .92);
+    cursor: pointer;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody td {
+    display: grid;
+    grid-template-columns: minmax(82px, 32%) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 9px 0;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .055);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody td::before {
+    color: var(--admin-muted);
+    content: attr(data-label);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody td:first-child > strong,
+  .admin-live-table-scroll .admin-promoter-table tbody td:first-child > small {
+    grid-column: 2;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody td:first-child > small {
+    margin-top: -6px;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody td:last-child {
+    border-bottom: 0;
+  }
+
+  .admin-live-table-scroll .admin-promoter-table tbody td:last-child > .fui-Button {
+    justify-self: start;
+  }
+
+  .admin-live-users-page .admin-pagination {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .admin-live-users-page .admin-pagination > .fui-Button {
+    min-width: 0;
+    padding-inline: 8px;
+    font-size: 10px;
+  }
+
+  .admin-live-users-page .admin-pagination > .fui-Button:last-child {
+    justify-self: end;
+  }
+}

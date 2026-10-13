@@ -633,7 +633,8 @@ export default {
       if (path === '/api/support/settings' && method === 'GET') {
         const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('telegram_url', 'telegram_popup_message', 'support_email', 'live_chat_enabled')");
         const values = Object.fromEntries(result.rows.map((row) => [row.key, row.value]));
-        return json({ telegramUrl: values.telegram_url ?? '', telegramPopupMessage: values.telegram_popup_message ?? '', supportEmail: values.support_email ?? '', liveChatEnabled: values.live_chat_enabled === '1' });
+        const canUseTelegram = Boolean(user.permissions.telegram);
+        return json({ telegramUrl: canUseTelegram ? values.telegram_url ?? '' : '', telegramPopupMessage: canUseTelegram ? values.telegram_popup_message ?? '' : '', supportEmail: values.support_email ?? '', liveChatEnabled: values.live_chat_enabled === '1' });
       }
 
       if (path === '/api/admin/support/settings' && method === 'GET') {
@@ -646,16 +647,27 @@ export default {
       if (path === '/api/admin/support/settings' && method === 'PUT') {
         if (user.role !== 'ADMIN') return json({ error: 'Admin authentication required.' }, 401);
         const input = await readBody(request);
+        const telegramUrl = String(input.telegramUrl ?? '').trim();
+        const telegramPopupMessage = String(input.telegramPopupMessage ?? '').trim();
+        const supportEmail = String(input.supportEmail ?? '').trim();
+        if (telegramUrl) {
+          try {
+            const parsed = new URL(telegramUrl);
+            if (parsed.protocol !== 'https:' || !['t.me', 'telegram.me'].includes(parsed.hostname) || parsed.pathname === '/') throw new Error();
+          } catch { return json({ error: 'Enter a valid HTTPS Telegram group link.' }, 400); }
+        }
+        if (supportEmail && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail) || supportEmail.length > 200)) return json({ error: 'Enter a valid support email address.' }, 400);
+        if (telegramPopupMessage.length > 600) return json({ error: 'Telegram popup message must be 600 characters or fewer.' }, 400);
         const settings = {
-          telegram_url: String(input.telegramUrl ?? ''),
-          telegram_popup_message: String(input.telegramPopupMessage ?? '').slice(0, 600),
-          support_email: String(input.supportEmail ?? ''),
+          telegram_url: telegramUrl,
+          telegram_popup_message: telegramPopupMessage,
+          support_email: supportEmail,
           live_chat_enabled: input.liveChatEnabled ? '1' : '0',
         };
         for (const [key, value] of Object.entries(settings)) {
           await pool.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', [key, value, now()]);
         }
-        return json({ ok: true });
+        return json({ telegramUrl: settings.telegram_url, telegramPopupMessage: settings.telegram_popup_message, supportEmail: settings.support_email, liveChatEnabled: settings.live_chat_enabled === '1' });
       }
 
       if (path === '/api/admin/countries' && method === 'GET') {

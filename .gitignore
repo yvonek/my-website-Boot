@@ -7,3 +7,5 @@ dist/
 coverage/
 data/*.sqlite
 .neon
+
+.copilot-azure/

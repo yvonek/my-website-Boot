@@ -1,28 +1,30 @@
 import { Button, createDarkTheme, createLightTheme, FluentProvider, type BrandVariants } from '@fluentui/react-components';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import type { DashboardData, Plan } from './api/types';
 import { AppShell } from './components/AppShell';
-import { HomeDashboard } from './pages/HomeDashboard';
-import { InvitePage } from './pages/InvitePage';
-import { MePage } from './pages/MePage';
-import { PlansPage } from './pages/PlansPage';
-import { TeamPage } from './pages/TeamPage';
-import { WalletPage } from './pages/WalletPage';
-import { TransactionsPage } from './pages/TransactionsPage';
-import { AdminTransactionsPage } from './pages/AdminTransactionsPage';
-import { SupportPage } from './pages/SupportPage';
-import { AdminBusinessSettingsPage } from './pages/AdminBusinessSettingsPage';
-import { AdminConsolePage } from './pages/AdminConsolePage';
-import { AdminUsersPage } from './pages/AdminUsersPage';
-import { AdminMessagesPage } from './pages/AdminMessagesPage';
-import { AdminPromotersPage } from './pages/AdminPromotersPage';
-import { AdminLiveUsersPage } from './pages/AdminLiveUsersPage';
-import { UserMessagesPage } from './pages/UserMessagesPage';
-import { DepositPage } from './pages/DepositPage';
-import { WithdrawPage } from './pages/WithdrawPage';
-import { LoginPage, RegisterPage } from './pages/AuthPages';
 import type { AuthUser } from './api/types';
+
+const HomeDashboard = lazy(() => import('./pages/HomeDashboard').then((module) => ({ default: module.HomeDashboard })));
+const InvitePage = lazy(() => import('./pages/InvitePage').then((module) => ({ default: module.InvitePage })));
+const MePage = lazy(() => import('./pages/MePage').then((module) => ({ default: module.MePage })));
+const PlansPage = lazy(() => import('./pages/PlansPage').then((module) => ({ default: module.PlansPage })));
+const TeamPage = lazy(() => import('./pages/TeamPage').then((module) => ({ default: module.TeamPage })));
+const WalletPage = lazy(() => import('./pages/WalletPage').then((module) => ({ default: module.WalletPage })));
+const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then((module) => ({ default: module.TransactionsPage })));
+const AdminTransactionsPage = lazy(() => import('./pages/AdminTransactionsPage').then((module) => ({ default: module.AdminTransactionsPage })));
+const SupportPage = lazy(() => import('./pages/SupportPage').then((module) => ({ default: module.SupportPage })));
+const AdminBusinessSettingsPage = lazy(() => import('./pages/AdminBusinessSettingsPage').then((module) => ({ default: module.AdminBusinessSettingsPage })));
+const AdminConsolePage = lazy(() => import('./pages/AdminConsolePage').then((module) => ({ default: module.AdminConsolePage })));
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
+const AdminMessagesPage = lazy(() => import('./pages/AdminMessagesPage').then((module) => ({ default: module.AdminMessagesPage })));
+const AdminPromotersPage = lazy(() => import('./pages/AdminPromotersPage').then((module) => ({ default: module.AdminPromotersPage })));
+const AdminLiveUsersPage = lazy(() => import('./pages/AdminLiveUsersPage').then((module) => ({ default: module.AdminLiveUsersPage })));
+const UserMessagesPage = lazy(() => import('./pages/UserMessagesPage').then((module) => ({ default: module.UserMessagesPage })));
+const DepositPage = lazy(() => import('./pages/DepositPage').then((module) => ({ default: module.DepositPage })));
+const WithdrawPage = lazy(() => import('./pages/WithdrawPage').then((module) => ({ default: module.WithdrawPage })));
+const LoginPage = lazy(() => import('./pages/AuthPages').then((module) => ({ default: module.LoginPage })));
+const RegisterPage = lazy(() => import('./pages/AuthPages').then((module) => ({ default: module.RegisterPage })));
 
 const brandRamp: BrandVariants = { 10: '#2a0710', 20: '#450b18', 30: '#600f20', 40: '#7d1428', 50: '#99192f', 60: '#b31f35', 70: '#c82d42', 80: '#d74355', 90: '#e05d6a', 100: '#e87a83', 110: '#ef999f', 120: '#f4b5b9', 130: '#f8cdd0', 140: '#fbe0e2', 150: '#fdf0f1', 160: '#fff8f8' };
 
@@ -44,24 +46,27 @@ function localizeAmounts(message: string, currencyCode: string, rate: number, we
   return compact.replace(/(\d[\d,]*(?:\.\d+)?)\s*(?:RWF|FRW)\b/gi, (_match, amount: string) => `${Math.round(Number(amount.replace(/,/g, '')) * rate).toLocaleString('en-US')} ${currencyCode}`);
 }
 
-function TelegramInvitePopup({ userId, currencyCode = 'RWF', exchangeRate = 1, welcomeBonus }: { userId: string; currencyCode?: string; exchangeRate?: number; welcomeBonus?: number }) {
-  const [invitation, setInvitation] = useState<{ url: string; message: string } | null>(null);
+function TelegramInvitePopup({ userId, countryCode, currencyCode = 'RWF', exchangeRate = 1, welcomeBonus }: { userId: string; countryCode?: string; currencyCode?: string; exchangeRate?: number; welcomeBonus?: number }) {
+  const [invitation, setInvitation] = useState<{ url: string; message: string; dismissalKey: string } | null>(null);
 
   useEffect(() => {
-    const storageKey = `telegram-invite-dismissed:${userId}`;
-    if (sessionStorage.getItem(storageKey)) return;
     let active = true;
     fetch('/api/support/settings')
       .then((response) => response.ok ? response.json() : null)
       .then((settings) => {
-        if (active && (settings?.telegramUrl || settings?.telegramPopupMessage)) setInvitation({ url: settings.telegramUrl ?? '', message: localizeAmounts(settings.telegramPopupMessage || 'Join our Telegram group for updates and support.', currencyCode, exchangeRate, welcomeBonus) });
+        const url = settings?.telegramUrl ?? '';
+        if (!active || (!url && !settings?.telegramPopupMessage)) return;
+        const popupWelcomeBonus = countryCode === 'UG' ? 45000 : countryCode === 'BI' ? 43500 : welcomeBonus;
+        const message = localizeAmounts(settings.telegramPopupMessage || 'Join our Telegram group for updates and support.', currencyCode, exchangeRate, popupWelcomeBonus);
+        const dismissalKey = `telegram-invite-dismissed:${userId}:${JSON.stringify([url, message])}`;
+        if (!sessionStorage.getItem(dismissalKey)) setInvitation({ url, message, dismissalKey });
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [userId]);
+  }, [userId, countryCode, currencyCode, exchangeRate, welcomeBonus]);
 
   const dismiss = () => {
-    sessionStorage.setItem(`telegram-invite-dismissed:${userId}`, '1');
+    if (invitation) sessionStorage.setItem(invitation.dismissalKey, '1');
     setInvitation(null);
   };
 
@@ -156,8 +161,8 @@ export default function App() {
         ? <AdminBusinessSettingsPage />
         : <div className="admin-access-denied"><h1>Admin access required</h1><p>This account does not have Admin access.</p></div>
     : page;
-  if (isAuthRoute || !authLoaded || !authUser) return <FluentProvider theme={theme} className="fluent-app">{renderedPage}</FluentProvider>;
-  if (isAdminPath) return <FluentProvider theme={theme} className={authUser.role === 'ADMIN' ? 'fluent-app admin-console-provider' : 'fluent-app'}>{renderedPage}</FluentProvider>;
-  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}>{renderedPage}</AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} welcomeBonus={authUser.displayWelcomeBonusAmount} />}</FluentProvider>;
+  if (isAuthRoute || !authLoaded || !authUser) return <FluentProvider theme={theme} className="fluent-app"><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></FluentProvider>;
+  if (isAdminPath) return <FluentProvider theme={theme} className={authUser.role === 'ADMIN' ? 'fluent-app admin-console-provider' : 'fluent-app'}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></FluentProvider>;
+  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} countryCode={authUser.countryCode} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} welcomeBonus={authUser.displayWelcomeBonusAmount} />}</FluentProvider>;
 }
 

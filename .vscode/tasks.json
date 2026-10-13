@@ -89,6 +89,20 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "build"
+		},
+		{
+			"label": "account-web: test",
+			"type": "shell",
+			"command": "npm.cmd test -- --reporter=verbose",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Verify Telegram popup behavior",
+			"type": "shell",
+			"command": "npm.cmd test -- --run src/test/dashboard.test.tsx --reporter=verbose",
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }
