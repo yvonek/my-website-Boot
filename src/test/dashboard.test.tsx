@@ -31,9 +31,11 @@ describe('dashboard', () => {
     vi.stubGlobal('fetch', fetchRequest);
 
     render(<App />);
-    expect(await screen.findByRole('region', { name: 'Wallet balance' })).toBeInTheDocument();
-    expect(screen.getByText('7,000 RWF')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Available products' })).toBeInTheDocument();
+    // The first test pays the lazy-load cost of HomeDashboard, which exceeds Vitest's default 5000ms testTimeout on this machine.
+    expect(await screen.findByRole('region', { name: 'Wallet balance' }, { timeout: 15000 })).toBeInTheDocument();
+    // Balance and catalog data load asynchronously after the section mounts, so wait for them explicitly.
+    expect(await screen.findByText('7,000 RWF')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Available products' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Starter CCTV' })).toHaveAttribute('src', plan.imageData);
     expect(screen.getByText('125 / 500 slots sold')).toBeInTheDocument();
     expect(screen.getByText('375 remaining')).toBeInTheDocument();
@@ -41,7 +43,7 @@ describe('dashboard', () => {
     expect(screen.getByRole('button', { name: 'BUY NOW' })).toBeInTheDocument();
     expect(fetchRequest.mock.calls.map(([input]) => String(input))).toContain('/api/dashboard');
     expect(fetchRequest.mock.calls.filter(([input]) => String(input) === '/api/dashboard')).toHaveLength(1);
-  });
+  }, 20000);
 
   it('requires a session before rendering the protected Withdraw page', async () => {
     window.history.replaceState({}, '', '/withdraw');

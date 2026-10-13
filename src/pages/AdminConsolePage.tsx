@@ -141,7 +141,7 @@ export function AdminConsolePage({ adminName, onLogout }: { adminName: string; o
     setMessage('');
     try {
       const editing = plans.some((plan) => plan.name === planDraft.name);
-      const input: AdminPlanInput = { name: planDraft.name, description: planDraft.description, imageData: planDraft.imageData, price: planDraft.price, dailyIncome: planDraft.dailyIncome, durationDays: planDraft.durationDays, purchaseBonus: planDraft.purchaseBonus, totalSlots: planDraft.totalSlots, status: planDraft.status, position: planDraft.position };
+      const input: AdminPlanInput = { name: planDraft.name, description: planDraft.description, imageData: planDraft.imageData || undefined, price: planDraft.price, dailyIncome: planDraft.dailyIncome, durationDays: planDraft.durationDays, purchaseBonus: planDraft.purchaseBonus, totalSlots: planDraft.totalSlots, status: planDraft.status, position: planDraft.position };
       if (editing) await api.updateAdminPlan(planDraft.name, input);
       else await api.createAdminPlan(input);
       setPlanDraft(null);

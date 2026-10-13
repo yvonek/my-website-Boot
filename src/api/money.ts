@@ -10,6 +10,18 @@ export function formatCurrencyAmount(amount: number, currencyCode: CurrencyCode 
   return `${Number(amount ?? 0).toLocaleString()} ${currencyCode}`;
 }
 
+const trc20AddressPattern = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
+
+export function isValidTrc20Address(value: string) {
+  return trc20AddressPattern.test(String(value ?? '').trim());
+}
+
+// unitsPerUsdt = local currency units per 1 USDT. Returns 0 when the rate is not configured.
+export function usdtAmount(localAmount: number, unitsPerUsdt: number) {
+  if (!Number.isFinite(unitsPerUsdt) || unitsPerUsdt <= 0 || !Number.isFinite(localAmount)) return 0;
+  return Math.round((Number(localAmount) / unitsPerUsdt) * 100) / 100;
+}
+
 export function convertCurrencyAmount(amount: number, sourceUnitsPerRwf: number, targetUnitsPerRwf: number) {
   if (!Number.isFinite(sourceUnitsPerRwf) || sourceUnitsPerRwf <= 0 || !Number.isFinite(targetUnitsPerRwf) || targetUnitsPerRwf <= 0) throw new Error('Positive exchange rates are required.');
   return Math.round(Math.round(Number(amount) / sourceUnitsPerRwf) * targetUnitsPerRwf);

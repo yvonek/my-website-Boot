@@ -19,6 +19,7 @@ export interface Plan {
   name: string;
   description?: string;
   imageData?: string | null;
+  imageUrl?: string | null;
   image?: string;
   price: number;
   displayPrice?: number;
@@ -103,19 +104,19 @@ export interface ApiClient {
   createPurchase(input: { productId: string; idempotencyKey: string }): Promise<{ purchase: { id: string; status: string; reference: string }; product: Plan; balance: WalletBalance; idempotentReplay?: boolean }>;
 }
 
-export interface AdminPlanInput { name: string; description: string; imageData: string; price: number; dailyIncome: number; durationDays: number; purchaseBonus: number; totalSlots: number; status: PlanStatus; position: number; }
+export interface AdminPlanInput { name: string; description: string; imageData?: string; price: number; dailyIncome: number; durationDays: number; purchaseBonus: number; totalSlots: number; status: PlanStatus; position: number; }
 
 export type TransactionType = 'DEPOSIT' | 'WITHDRAWAL';
 export type TransactionStatus = 'PENDING' | 'APPROVED' | 'AWAITING_PAYOUT' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REJECTED' | 'CANCELLED';
-export type PaymentMethod = 'MTN_MOMO' | 'AIRTEL_MONEY';
-export interface DepositPaymentMethod { id: string; name: string; accountName: string; accountNumber: string; instructions: string; ussdTemplate: string; minimumAmount: number; maximumAmount: number; countryCode?: 'RW' | 'BI' | 'UG'; currencyCode?: 'RWF' | 'BIF' | 'UGX'; customerUnitsPerRwf?: number; crossBorderEnabled?: boolean; receivingCountryCode?: 'RW' | 'BI' | 'UG'; receivingCurrencyCode?: 'RWF' | 'BIF' | 'UGX'; receivingUnitsPerRwf?: number; logoData: string | null; enabled: boolean; position: number; }
+export type PaymentMethod = 'MTN_MOMO' | 'AIRTEL_MONEY' | 'USDT_TRC20';
+export interface DepositPaymentMethod { id: string; name: string; accountName: string; accountNumber: string; instructions: string; ussdTemplate: string; minimumAmount: number; maximumAmount: number; countryCode?: 'RW' | 'BI' | 'UG'; currencyCode?: 'RWF' | 'BIF' | 'UGX'; customerUnitsPerRwf?: number; crossBorderEnabled?: boolean; receivingCountryCode?: 'RW' | 'BI' | 'UG'; receivingCurrencyCode?: 'RWF' | 'BIF' | 'UGX'; receivingUnitsPerRwf?: number; cryptoNetwork?: '' | 'TRC20'; unitsPerUsdt?: number; logoData: string | null; enabled: boolean; position: number; }
 export interface WalletBalance { userId: string; availableBalance: number; reservedBalance: number; displayAvailableBalance?: number; displayReservedBalance?: number; lockedWelcomeBonus?: number; displayLockedWelcomeBonus?: number; welcomeBonusAmount?: number; displayWelcomeBonusAmount?: number; countryCode?: 'RW' | 'BI' | 'UG'; currencyCode?: 'RWF' | 'BIF' | 'UGX'; exchangeRate?: number; paymentMode: string; welcomeBonusStatus?: 'NONE' | 'LOCKED' | 'UNLOCKED'; welcomeBonusAwardedAt?: string | null; welcomeBonusUnlockedAt?: string | null; }
 export interface WalletRequest { amount: number; phoneNumber: string; paymentMethod: PaymentMethod; senderName?: string; receiverName?: string; }
 export interface DepositRequest { amount: number; phoneNumber: string; senderName: string; depositMethodId: string; screenshotData: string; }
-export interface WithdrawalPreview { channel: string; phoneNumber: string; receiverName: string; paymentMethod: string; availableBalance: number; displayAvailableBalance?: number; withdrawalAmount: number; displayWithdrawalAmount?: number; withdrawalFee: number; displayWithdrawalFee?: number; amountReceived: number; displayAmountReceived?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; }
-export interface WithdrawalAccount { accountHolderName: string; phoneNumber: string; paymentMethod: PaymentMethod; createdAt: string; updatedAt: string; }
-export interface WithdrawalAccountInput { accountHolderName: string; phoneNumber: string; paymentMethod: PaymentMethod; }
-export interface WalletTransaction { id: string; userId: string; userName?: string; type: TransactionType; amount: number; displayAmount?: number; withdrawalFee: number; displayFee?: number; amountReceived: number; displayAmountReceived?: number; countryCode?: 'RW' | 'BI' | 'UG'; currencyCode?: 'RWF' | 'BIF' | 'UGX'; exchangeRate?: number; depositReceivingCountryCode?: 'RW' | 'BI' | 'UG' | null; depositReceivingCurrencyCode?: 'RWF' | 'BIF' | 'UGX' | null; depositReceivingExchangeRate?: number | null; depositPaymentAmount?: number | null; senderName: string; receiverName: string; phoneNumber: string; paymentMethod: string; depositMethodId?: string | null; depositMethodName?: string | null; screenshotData?: string | null; status: TransactionStatus; provider: string; providerReference: string; internalReference: string; failureReason: string | null; rejectionReason: string | null; createdAt: string; updatedAt: string; completedAt: string | null; }
+export interface WithdrawalPreview { channel: string; phoneNumber: string; receiverName: string; paymentMethod: string; availableBalance: number; displayAvailableBalance?: number; withdrawalAmount: number; displayWithdrawalAmount?: number; withdrawalFee: number; displayWithdrawalFee?: number; amountReceived: number; displayAmountReceived?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; walletAddress?: string; cryptoAmount?: number | null; }
+export interface WithdrawalAccount { accountHolderName: string; phoneNumber: string; walletAddress?: string; paymentMethod: PaymentMethod; createdAt: string; updatedAt: string; }
+export interface WithdrawalAccountInput { accountHolderName: string; phoneNumber: string; walletAddress?: string; paymentMethod: PaymentMethod; }
+export interface WalletTransaction { id: string; userId: string; userName?: string; type: TransactionType; amount: number; displayAmount?: number; withdrawalFee: number; displayFee?: number; amountReceived: number; displayAmountReceived?: number; countryCode?: 'RW' | 'BI' | 'UG'; currencyCode?: 'RWF' | 'BIF' | 'UGX'; exchangeRate?: number; depositReceivingCountryCode?: 'RW' | 'BI' | 'UG' | null; depositReceivingCurrencyCode?: 'RWF' | 'BIF' | 'UGX' | null; depositReceivingExchangeRate?: number | null; depositPaymentAmount?: number | null; cryptoNetwork?: string; cryptoAmount?: number | null; cryptoUnitsPerUsdt?: number | null; cryptoAddress?: string | null; senderName: string; receiverName: string; phoneNumber: string; paymentMethod: string; depositMethodId?: string | null; depositMethodName?: string | null; screenshotData?: string | null; status: TransactionStatus; provider: string; providerReference: string; internalReference: string; failureReason: string | null; rejectionReason: string | null; createdAt: string; updatedAt: string; completedAt: string | null; }
 export interface WalletTransactionResponse { transaction: WalletTransaction; }
 export interface SupportSettings { telegramUrl: string; telegramPopupMessage: string; supportEmail: string; liveChatEnabled: boolean; }
 export interface SupportConversation { id: string; user_id: string; status: 'OPEN' | 'RESOLVED'; }

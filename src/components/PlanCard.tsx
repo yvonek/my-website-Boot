@@ -34,7 +34,7 @@ export function PlanCard({ plan, alreadyPurchased = false, onPurchased }: { plan
   return (
     <article className="product-card">
       <div className="product-card__image-wrap">
-        {plan.imageData && <img className="product-card__image" src={plan.imageData} alt={plan.name} />}
+        {(plan.imageUrl ?? plan.imageData) && <img className="product-card__image" src={plan.imageUrl ?? plan.imageData ?? undefined} alt={plan.name} />}
         <div className="product-card__image-overlay"><Text weight="semibold">{plan.name}</Text><Badge appearance="tint" color={plan.soldOut ? 'danger' : plan.status === 'Active' ? 'success' : 'warning'}>{plan.soldOut ? 'SOLD OUT' : plan.status}</Badge></div>
       </div>
       <div className="product-card__content">

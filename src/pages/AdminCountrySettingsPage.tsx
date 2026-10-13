@@ -4,7 +4,7 @@ import type { ChangeEvent } from 'react';
 
 type CountryCode = 'RW' | 'BI' | 'UG';
 interface CountryMethod { code: string; name: string; enabled: boolean; }
-interface CountrySetting { countryCode: CountryCode; countryName: string; phonePrefix: string; currencyCode: 'RWF' | 'BIF' | 'UGX'; enabled: boolean; unitsPerRwf: number; depositMethods: CountryMethod[]; withdrawalMethods: CountryMethod[]; }
+interface CountrySetting { countryCode: CountryCode; countryName: string; phonePrefix: string; currencyCode: 'RWF' | 'BIF' | 'UGX'; enabled: boolean; unitsPerRwf: number; unitsPerUsdt: number; depositMethods: CountryMethod[]; withdrawalMethods: CountryMethod[]; }
 
 export function AdminCountrySettingsPage() {
   const [countries, setCountries] = useState<CountrySetting[]>([]);
@@ -42,7 +42,7 @@ export function AdminCountrySettingsPage() {
     setSaving(country.countryCode);
     setMessage('');
     try {
-      const response = await fetch(`/api/admin/countries/${country.countryCode}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: country.enabled, unitsPerRwf: Number(country.unitsPerRwf), withdrawalMethods: country.withdrawalMethods.filter((method) => method.enabled).map((method) => method.code) }) });
+      const response = await fetch(`/api/admin/countries/${country.countryCode}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: country.enabled, unitsPerRwf: Number(country.unitsPerRwf), unitsPerUsdt: Number(country.unitsPerUsdt ?? 0), withdrawalMethods: country.withdrawalMethods.filter((method) => method.enabled).map((method) => method.code) }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? 'Country settings could not be saved.');
       setMessage(`${country.countryName} settings saved.`);
@@ -58,6 +58,7 @@ export function AdminCountrySettingsPage() {
     {loading ? <Text className="muted">Loading country settings...</Text> : <div className="admin-country-grid">{countries.map((country) => <Card className="admin-country-card" key={country.countryCode}>
       <div className="admin-country-card__heading"><div><strong>{country.countryName}</strong><span>{country.countryCode} · {country.phonePrefix} · {country.currencyCode}</span></div><label className="deposit-admin-status"><input type="checkbox" checked={country.enabled} onChange={(event) => updateCountry(country.countryCode, { enabled: event.currentTarget.checked })} /><span>{country.enabled ? 'Enabled' : 'Disabled'}</span></label></div>
       <Field label={`Currency units per 1 RWF (${country.currencyCode})`}><Input type="number" min={country.countryCode === 'RW' ? 1 : country.enabled ? 0.000001 : 0} step="0.000001" value={String(country.unitsPerRwf)} disabled={country.countryCode === 'RW'} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => updateCountry(country.countryCode, { unitsPerRwf: Number(value.value || 0) })} /></Field>
+      <Field label={`USDT (TRC20) rate: ${country.currencyCode} per 1 USDT`}><Input type="number" min="0" step="0.000001" value={String(country.unitsPerUsdt ?? 0)} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => updateCountry(country.countryCode, { unitsPerUsdt: Number(value.value || 0) })} /></Field>
       <div className="admin-country-deposits"><strong>Deposit methods</strong>{country.depositMethods.length ? country.depositMethods.map((method) => <span key={method.code}>{method.name} · {method.enabled ? 'Active' : 'Inactive'}</span>) : <span>None configured</span>}<a href="/admin/settings">Manage Deposit methods</a></div>
       <div className="admin-country-withdrawals"><strong>Withdrawal methods</strong>{country.withdrawalMethods.map((method) => <label className="admin-toggle" key={method.code}><input type="checkbox" checked={method.enabled} onChange={(event) => updateWithdrawalMethod(country.countryCode, method.code, event.currentTarget.checked)} /><span>{method.name}</span></label>)}</div>
       <Button appearance="primary" disabled={saving === country.countryCode} onClick={() => void saveCountry(country)}>{saving === country.countryCode ? 'Saving...' : 'Save country settings'}</Button>

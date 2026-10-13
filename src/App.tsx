@@ -109,8 +109,9 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [authUser?.id]);
   useEffect(() => { localStorage.setItem('app-theme', dark ? 'dark' : 'light'); }, [dark]);
+  const onAdminRoute = path === '/admin' || path.startsWith('/admin/');
   useEffect(() => {
-    if (!authLoaded || !authUser) return;
+    if (!authLoaded || !authUser || onAdminRoute) return;
     let cancelled = false;
     const loadingFailsafe = window.setTimeout(() => {
       if (!cancelled) setState('error');
@@ -130,7 +131,7 @@ export default function App() {
       }
     });
     return () => { cancelled = true; window.clearTimeout(loadingFailsafe); };
-  }, [reloadToken, authLoaded, authUser]);
+  }, [reloadToken, authLoaded, authUser, onAdminRoute]);
   useEffect(() => {
     if ((path !== '/plans' && path !== '/') || !authLoaded || !authUser) return;
     let cancelled = false;

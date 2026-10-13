@@ -1,5 +1,5 @@
 import { randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { attachDatabasePool } from '@neon/functions';
 import { convertLocalToRwf, convertRwfToLocal, normalizeCountryPhone, supportedCountries } from '../backend/currency.mjs';
 
@@ -34,10 +34,19 @@ function normalizePhone(input: unknown, countryCode: string) {
 function localAmount(amount: number, unitsPerRwf: number) {
   return convertRwfToLocal(Number(amount ?? 0), unitsPerRwf > 0 ? unitsPerRwf : 1);
 }
+function usdtAmount(amountRwf: number, unitsPerRwf: number, unitsPerUsdt: number) {
+  return Math.round((localAmount(amountRwf, unitsPerRwf) / unitsPerUsdt) * 100) / 100;
+}
+const cryptoMethod = 'USDT_TRC20';
+const cryptoNetworkTrc20 = 'TRC20';
+const trc20AddressPattern = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
+function validTronAddress(address: unknown) {
+  return trc20AddressPattern.test(String(address ?? '').trim());
+}
 
 async function countrySettings(countryCode: string) {
   const result = await pool.query(
-    'SELECT country_code AS "countryCode", country_name AS "countryName", phone_prefix AS "phonePrefix", currency_code AS "currencyCode", enabled, units_per_rwf AS "unitsPerRwf" FROM country_settings WHERE country_code = $1',
+    'SELECT country_code AS "countryCode", country_name AS "countryName", phone_prefix AS "phonePrefix", currency_code AS "currencyCode", enabled, units_per_rwf AS "unitsPerRwf", units_per_usdt AS "unitsPerUsdt" FROM country_settings WHERE country_code = $1',
     [countryCode],
   );
   return result.rows[0] ?? null;
@@ -69,6 +78,7 @@ async function currencyForUser(userId: string) {
     countryCode,
     currencyCode: validRate ? result.rows[0]?.currencyCode ?? country?.currencyCode : 'RWF',
     unitsPerRwf: validRate ? Number(country?.unitsPerRwf) : 1,
+    unitsPerUsdt: Number(country?.unitsPerUsdt) || 0,
     enabled: Boolean(country?.enabled),
     rateConfigured: validRate,
   };
@@ -215,13 +225,20 @@ async function auditAdmin(adminId: string | null, targetUserId: string | null, a
   await pool.query('INSERT INTO admin_audit_log (id, admin_user_id, target_user_id, action, previous_value, new_value, metadata, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [randomUUID(), adminId, targetUserId, action, encode(previousValue), encode(newValue), encode(metadata), now()]);
 }
 
+// Plan list queries select a lean column set: image bytes are never sent in JSON. Images are served by /api/plan-image.
+const planColumns = "name, description, note, price, deposited, daily_income, duration_days, total_slots, sold_slots, status, position, (image_data IS NOT NULL AND image_data <> '') AS has_image, md5(image_data) AS image_version";
+
+function planImageUrl(row: Record<string, any>) {
+  return row.has_image ? `/api/plan-image?name=${encodeURIComponent(row.name)}&v=${row.image_version}` : null;
+}
+
 function planView(row: Record<string, any>) {
   const soldSlots = Number(row.sold_slots ?? 0);
   const totalSlots = Number(row.total_slots ?? 0);
   const durationDays = Number(row.duration_days ?? 0);
   const dailyIncome = Number(row.daily_income ?? 0);
   return {
-    id: row.name, name: row.name, description: row.description ?? row.note, imageData: row.image_data ?? null,
+    id: row.name, name: row.name, description: row.description ?? row.note, imageUrl: planImageUrl(row),
     price: Number(row.price ?? 0), deposited: row.deposited, dailyIncome, incomePerDay: dailyIncome, totalIncome: dailyIncome * durationDays,
     durationDays, termDays: durationDays, term: `${durationDays} days`, purchaseBonus: 0, totalSlots, soldSlots,
     remainingSlots: Math.max(0, totalSlots - soldSlots), progressPercent: totalSlots ? Math.min(100, Math.floor((soldSlots / totalSlots) * 100)) : 0,
@@ -229,7 +246,7 @@ function planView(row: Record<string, any>) {
   };
 }
 
-function parsePlan(input: Record<string, unknown>) {
+function parsePlan(input: Record<string, unknown>, { keepExistingImage = false }: { keepExistingImage?: boolean } = {}) {
   const name = String(input.name ?? '').trim().slice(0, 100);
   const description = String(input.description ?? '').trim().slice(0, 2000);
   const imageData = input.imageData;
@@ -242,9 +259,12 @@ function parsePlan(input: Record<string, unknown>) {
   if (!name || !description || !Number.isSafeInteger(price) || price <= 0 || !Number.isSafeInteger(dailyIncome) || dailyIncome < 0 || !Number.isSafeInteger(durationDays) || durationDays <= 0 || !Number.isSafeInteger(totalSlots) || totalSlots <= 0) {
     return { error: 'Enter a name, description, positive price and duration, non-negative income, and at least one slot.' };
   }
-  const image = typeof imageData === 'string' ? imageData.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/) : null;
-  if (!image || Buffer.from(image[2], 'base64').byteLength > 4 * 1024 * 1024) return { error: 'Upload a PNG, JPEG, or WebP product image no larger than 4 MB.' };
-  return { value: { name, description, imageData: imageData as string, price, dailyIncome, durationDays, totalSlots, status, position } };
+  const omitImage = keepExistingImage && (imageData === undefined || imageData === null || imageData === '');
+  if (!omitImage) {
+    const image = typeof imageData === 'string' ? imageData.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/) : null;
+    if (!image || Buffer.from(image[2], 'base64').byteLength > 4 * 1024 * 1024) return { error: 'Upload a PNG, JPEG, or WebP product image no larger than 4 MB.' };
+  }
+  return { value: { name, description, imageData: omitImage ? null : imageData as string, price, dailyIncome, durationDays, totalSlots, status, position } };
 }
 
 function transactionView(row: Record<string, any>, currency: { countryCode: string; currencyCode: string; unitsPerRwf: number }) {
@@ -258,14 +278,16 @@ function transactionView(row: Record<string, any>, currency: { countryCode: stri
     commissionAmount: Number(row.commission_amount ?? 0), senderName: row.sender_name, receiverName: row.receiver_name, phoneNumber: maskPhone(row.phone_number),
     paymentMethod: row.payment_method, depositMethodId: row.deposit_method_id ?? null, depositMethodName: row.deposit_method_name ?? null,
     depositReceivingCountryCode: row.deposit_receiving_country_code ?? null, depositReceivingCurrencyCode: row.deposit_receiving_currency_code ?? null,
-    depositReceivingExchangeRate: row.deposit_receiving_exchange_rate ?? null, depositPaymentAmount: row.deposit_payment_amount ?? null,
+    depositReceivingExchangeRate: row.deposit_receiving_exchange_rate ?? null, depositPaymentAmount: row.deposit_payment_amount == null ? null : Number(row.deposit_payment_amount),
+    cryptoNetwork: row.crypto_network ?? '', cryptoAmount: row.crypto_amount == null ? null : Number(row.crypto_amount),
+    cryptoUnitsPerUsdt: row.crypto_units_per_usdt == null ? null : Number(row.crypto_units_per_usdt), cryptoAddress: row.crypto_address ?? null,
     status: row.status, provider: row.provider, providerReference: row.provider_reference, internalReference: row.internal_reference,
     failureReason: row.failure_reason, rejectionReason: row.rejection_reason, approvedBy: row.approved_by, approvedAt: row.approved_at,
     rejectedBy: row.rejected_by, rejectedAt: row.rejected_at, createdAt: row.created_at, updatedAt: row.updated_at, completedAt: row.completed_at,
   };
 }
 
-async function depositMethodView(row: Record<string, any>, currency: { currencyCode: string; unitsPerRwf: number } | null = null) {
+async function depositMethodView(row: Record<string, any>, currency: { currencyCode: string; unitsPerRwf: number; unitsPerUsdt?: number } | null = null) {
   const countryCode = row.country_code ?? 'RW';
   const receivingCountryCode = row.receiving_country_code ?? countryCode;
   const receivingCurrency = await countrySettings(receivingCountryCode);
@@ -276,6 +298,7 @@ async function depositMethodView(row: Record<string, any>, currency: { currencyC
     id: row.code, name: row.name, accountName: row.account_name, accountNumber: row.account_number, instructions: row.instructions, ussdTemplate: row.ussd_template ?? '',
     minimumAmount: currency ? localAmount(minimum, currency.unitsPerRwf) : minimum, maximumAmount: currency ? localAmount(maximum, currency.unitsPerRwf) : maximum,
     countryCode, currencyCode, customerUnitsPerRwf: Number(currency?.unitsPerRwf ?? 1), crossBorderEnabled: Boolean(row.cross_border_enabled), receivingCountryCode,
+    cryptoNetwork: row.crypto_network ?? '', unitsPerUsdt: Number(currency?.unitsPerUsdt ?? 0),
     receivingCurrencyCode: receivingCurrency?.currencyCode ?? currencyCode, receivingUnitsPerRwf: Number(receivingCurrency?.unitsPerRwf ?? currency?.unitsPerRwf ?? 1),
     logoData: row.logo_data, enabled: Boolean(row.enabled), position: row.position,
   };
@@ -292,7 +315,7 @@ async function platformSettings() {
   };
 }
 
-const withdrawalMethodCodes = ['MTN_MOMO', 'AIRTEL_MONEY'];
+const withdrawalMethodCodes = ['MTN_MOMO', 'AIRTEL_MONEY', cryptoMethod];
 const supportedCountryCodes = ['RW', 'BI', 'UG'];
 
 function positiveInteger(value: unknown) { const amount = Number(value); return Number.isSafeInteger(amount) && amount > 0 ? amount : null; }
@@ -302,7 +325,6 @@ function imageDataValid(value: unknown, maxBytes: number) {
   return Boolean(match) && Buffer.from(match![2], 'base64').byteLength <= maxBytes;
 }
 
-type PoolClient = Awaited<ReturnType<typeof pool.connect>>;
 async function withTransaction<T>(work: (client: PoolClient) => Promise<T>) {
   const client = await pool.connect();
   try {
@@ -336,7 +358,7 @@ async function withdrawalMethodEnabled(method: string, countryCode: string) {
 }
 
 async function withdrawalAccountFor(userId: string) {
-  const result = await pool.query('SELECT account_holder_name AS "accountHolderName", phone_number AS "phoneNumber", payment_method AS "paymentMethod", created_at AS "createdAt", updated_at AS "updatedAt" FROM withdrawal_accounts WHERE user_id = $1', [userId]);
+  const result = await pool.query('SELECT account_holder_name AS "accountHolderName", phone_number AS "phoneNumber", wallet_address AS "walletAddress", payment_method AS "paymentMethod", created_at AS "createdAt", updated_at AS "updatedAt" FROM withdrawal_accounts WHERE user_id = $1', [userId]);
   return result.rows[0] ?? null;
 }
 
@@ -392,17 +414,19 @@ async function permanentlyDeleteUsers(userIds: string[]) {
   return targets.length;
 }
 
-function parseDepositMethod(input: Record<string, unknown>) {
+async function parseDepositMethod(input: Record<string, unknown>) {
   const name = String(input.name ?? '').trim().slice(0, 80);
   const accountName = String(input.accountName ?? '').trim().slice(0, 120);
   const accountNumber = String(input.accountNumber ?? '').trim().slice(0, 80);
+  const cryptoNetwork = String(input.cryptoNetwork ?? '') === cryptoNetworkTrc20 ? cryptoNetworkTrc20 : '';
+  const isCrypto = cryptoNetwork === cryptoNetworkTrc20;
   const instructions = String(input.instructions ?? '').trim().slice(0, 1000);
-  let ussdTemplate = String(input.ussdTemplate ?? '').trim().slice(0, 160);
+  let ussdTemplate = isCrypto ? '' : String(input.ussdTemplate ?? '').trim().slice(0, 160);
   const minimumAmount = Math.round(Number(input.minimumAmount));
   const maximumAmount = Math.round(Number(input.maximumAmount));
   const enabled = Boolean(input.enabled);
   const countryCode = supportedCountryCodes.includes(String(input.countryCode)) ? String(input.countryCode) : 'RW';
-  const crossBorderEnabled = input.crossBorderEnabled === true;
+  const crossBorderEnabled = input.crossBorderEnabled === true && !isCrypto;
   const receivingCountryCode = crossBorderEnabled && supportedCountryCodes.includes(String(input.receivingCountryCode)) ? String(input.receivingCountryCode) : countryCode;
   const logoData = input.logoData ? String(input.logoData) : null;
   if (accountNumber && ussdTemplate.includes(accountNumber)) ussdTemplate = ussdTemplate.replace(accountNumber, '{number}');
@@ -412,10 +436,12 @@ function parseDepositMethod(input: Record<string, unknown>) {
   if (!Number.isSafeInteger(maximumAmount) || maximumAmount <= 0) return { error: 'Enter a valid maximum deposit amount (greater than 0).' };
   if (minimumAmount > maximumAmount) return { error: 'Minimum deposit cannot be greater than the maximum deposit.' };
   if (enabled && (!accountName || !accountNumber)) return { error: 'Add an account/merchant name and number before activating this method.' };
+  if (isCrypto && accountNumber && !validTronAddress(accountNumber)) return { error: 'Enter a valid TRC20 USDT wallet address (starts with T, 34 characters).' };
+  if (isCrypto && enabled && !(Number((await countrySettings(countryCode))?.unitsPerUsdt) > 0)) return { error: 'Set a USDT rate for this country before activating a USDT deposit method.' };
   if (crossBorderEnabled && !supportedCountryCodes.includes(String(input.receivingCountryCode))) return { error: 'Choose a supported receiving country for cross-border deposits.' };
   if (ussdTemplate && (!/(?:\{\{?\s*number\s*\}\}?|\bnumber\b)/i.test(ussdTemplate) || !/^[0-9*#+\s{}A-Za-z_-]+$/.test(ussdTemplate))) return { error: 'USSD template must include the number placeholder and contain only USSD digits, symbols, and placeholders.' };
   if (logoData && !imageDataValid(logoData, 128 * 1024)) return { error: 'Logo must be a PNG, JPEG, or WebP image under 128 KB.' };
-  return { value: { name, accountName, accountNumber, instructions, ussdTemplate, minimumAmount, maximumAmount, enabled: enabled ? 1 : 0, countryCode, crossBorderEnabled: crossBorderEnabled ? 1 : 0, receivingCountryCode, logoData, position: Number.isSafeInteger(Number(input.position)) ? Number(input.position) : 0 } };
+  return { value: { name, accountName, accountNumber, instructions, ussdTemplate, minimumAmount, maximumAmount, enabled: enabled ? 1 : 0, countryCode, crossBorderEnabled: crossBorderEnabled ? 1 : 0, receivingCountryCode, cryptoNetwork, logoData, position: Number.isSafeInteger(Number(input.position)) ? Number(input.position) : 0 } };
 }
 
 export default {
@@ -435,7 +461,7 @@ export default {
         const mode = url.searchParams.get('mode');
         const existing = mode === 'login' ? await pool.query(`SELECT DISTINCT u.country_code AS "countryCode"
           FROM users u LEFT JOIN user_access_controls c ON c.user_id = u.id WHERE c.deleted_at IS NULL`) : { rows: [] };
-        const countries = await pool.query(`SELECT country_code AS "countryCode", country_name AS "countryName", phone_prefix AS "phonePrefix", currency_code AS "currencyCode", enabled, units_per_rwf AS "unitsPerRwf" FROM country_settings`);
+        const countries = await pool.query(`SELECT country_code AS "countryCode", country_name AS "countryName", phone_prefix AS "phonePrefix", currency_code AS "currencyCode", enabled, units_per_rwf AS "unitsPerRwf", units_per_usdt AS "unitsPerUsdt" FROM country_settings`);
         const existingCodes = new Set(existing.rows.map((row) => row.countryCode));
         return json({ countries: countries.rows.map((country) => ({ ...country, enabled: Boolean(country.enabled) })).filter((country) => (country.enabled && Number(country.unitsPerRwf) > 0) || existingCodes.has(country.countryCode)) });
       }
@@ -520,6 +546,13 @@ export default {
       const user = await currentUser(request);
       if (path.startsWith('/api/') && !user) return json({ error: 'Authentication required.' }, 401);
 
+      if (path === '/api/plan-image' && method === 'GET') {
+        const image = await pool.query('SELECT image_data FROM plans WHERE name = $1', [url.searchParams.get('name') ?? '']);
+        const match = String(image.rows[0]?.image_data ?? '').match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
+        if (!match) return json({ error: 'Image not found.' }, 404);
+        return new Response(new Uint8Array(Buffer.from(match[2], 'base64')), { status: 200, headers: { 'content-type': match[1], 'cache-control': 'private, max-age=86400' } });
+      }
+
       if (path === '/api/user/account-state' && method === 'GET') {
         const access = await userAccess(user.id);
         return json({ accountStatus: access.accountStatus, allowDeposits: access.allowDeposits, allowWithdrawals: access.allowWithdrawals, permissions: access.permissions });
@@ -542,7 +575,7 @@ export default {
         const access = user.permissions;
         const [metrics, plans, referrals, tools] = await Promise.all([
           access.dashboard ? pool.query('SELECT label, value, detail, tone FROM dashboard_metrics ORDER BY position, label') : { rows: [] },
-          access.products && currency.enabled ? pool.query("SELECT * FROM plans WHERE total_slots > 0 AND status = 'Active' ORDER BY position, name") : { rows: [] },
+          access.products && currency.enabled ? pool.query(`SELECT ${planColumns} FROM plans WHERE total_slots > 0 AND status = 'Active' ORDER BY position, name`) : { rows: [] },
           access.myTeam ? pool.query('SELECT person, joined, contribution, commission, status FROM referrals ORDER BY position, person') : { rows: [] },
           access.support ? pool.query('SELECT name, value, state FROM support_tools ORDER BY position, name') : { rows: [] },
         ]);
@@ -552,7 +585,7 @@ export default {
           const price = Number(row.price ?? 0);
           const totalSlots = Number(row.total_slots ?? 0);
           const soldSlots = Number(row.sold_slots ?? 0);
-          const plan = { id: row.name, name: row.name, description: row.description ?? row.note, imageData: row.image_data ?? null, price, deposited: row.deposited, dailyIncome, incomePerDay: dailyIncome, totalIncome: dailyIncome * durationDays, durationDays, termDays: durationDays, term: `${durationDays} days`, purchaseBonus: 0, totalSlots, soldSlots, remainingSlots: Math.max(0, totalSlots - soldSlots), progressPercent: totalSlots ? Math.min(100, Math.floor(soldSlots * 100 / totalSlots)) : 0, soldOut: totalSlots > 0 && soldSlots >= totalSlots, status: row.status, note: row.description ?? row.note };
+          const plan = { id: row.name, name: row.name, description: row.description ?? row.note, imageUrl: planImageUrl(row), price, deposited: row.deposited, dailyIncome, incomePerDay: dailyIncome, totalIncome: dailyIncome * durationDays, durationDays, termDays: durationDays, term: `${durationDays} days`, purchaseBonus: 0, totalSlots, soldSlots, remainingSlots: Math.max(0, totalSlots - soldSlots), progressPercent: totalSlots ? Math.min(100, Math.floor(soldSlots * 100 / totalSlots)) : 0, soldOut: totalSlots > 0 && soldSlots >= totalSlots, status: row.status, note: row.description ?? row.note };
           return { ...plan, displayPrice: localAmount(price, currency.unitsPerRwf), displayDailyIncome: localAmount(dailyIncome, currency.unitsPerRwf), displayTotalIncome: localAmount(plan.totalIncome, currency.unitsPerRwf), currencyCode: currency.currencyCode, countryCode: currency.countryCode };
         });
         return json({ metrics: metrics.rows, plans: mappedPlans, referrals: referrals.rows, tools: tools.rows, countryCode: currency.countryCode, currencyCode: currency.currencyCode, exchangeRate: currency.unitsPerRwf });
@@ -672,7 +705,7 @@ export default {
 
       if (path === '/api/admin/countries' && method === 'GET') {
         if (user.role !== 'ADMIN') return json({ error: 'Admin authentication required.' }, 401);
-        const countries = await pool.query('SELECT country_code AS "countryCode", country_name AS "countryName", phone_prefix AS "phonePrefix", currency_code AS "currencyCode", enabled, units_per_rwf AS "unitsPerRwf" FROM country_settings ORDER BY country_code');
+        const countries = await pool.query('SELECT country_code AS "countryCode", country_name AS "countryName", phone_prefix AS "phonePrefix", currency_code AS "currencyCode", enabled, units_per_rwf AS "unitsPerRwf", units_per_usdt AS "unitsPerUsdt" FROM country_settings ORDER BY country_code');
         const [withdrawal, deposit] = await Promise.all([
           pool.query('SELECT m.code, m.name, c.country_code AS "countryCode", coalesce(c.enabled, 0) AS enabled FROM withdrawal_methods m LEFT JOIN country_withdrawal_methods c ON c.method_code = m.code ORDER BY m.name'),
           pool.query('SELECT code, name, enabled, country_code AS "countryCode" FROM deposit_methods ORDER BY position, name'),
@@ -981,7 +1014,7 @@ export default {
 
       if (path === '/api/admin/plans' && method === 'GET') {
         if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
-        const plans = await pool.query('SELECT * FROM plans ORDER BY position, name');
+        const plans = await pool.query(`SELECT ${planColumns} FROM plans ORDER BY position, name`);
         return json({ plans: plans.rows.map(planView) });
       }
 
@@ -997,22 +1030,22 @@ export default {
           if ((error as { code?: string }).code === '23505') return json({ error: 'A product with that name already exists.' }, 409);
           throw error;
         }
-        return json({ plan: planView((await pool.query('SELECT * FROM plans WHERE name = $1', [plan.name])).rows[0]) }, 201);
+        return json({ plan: planView((await pool.query(`SELECT ${planColumns} FROM plans WHERE name = $1`, [plan.name])).rows[0]) }, 201);
       }
 
       const adminPlanRoute = path.match(/^\/api\/admin\/plans\/([^/]+)$/);
       if (adminPlanRoute && method === 'PUT') {
         if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
         const name = decodeURIComponent(adminPlanRoute[1]);
-        const parsed = parsePlan({ ...(await readBody(request)), name });
+        const parsed = parsePlan({ ...(await readBody(request)), name }, { keepExistingImage: true });
         if ('error' in parsed) return json({ error: parsed.error }, 400);
         const plan = parsed.value;
         const current = await pool.query('SELECT sold_slots FROM plans WHERE name = $1', [name]);
         if (!current.rows[0]) return json({ error: 'Product not found.' }, 404);
         if (plan.totalSlots < Number(current.rows[0].sold_slots)) return json({ error: `Total slots cannot be less than ${current.rows[0].sold_slots} slots already sold.` }, 400);
-        await pool.query('UPDATE plans SET deposited = $1, income_per_day = $2, term = $3, status = $4, note = $5, position = $6, description = $7, image_data = $8, price = $9, daily_income = $10, duration_days = $11, purchase_bonus = 0, total_slots = $12 WHERE name = $13',
+        await pool.query('UPDATE plans SET deposited = $1, income_per_day = $2, term = $3, status = $4, note = $5, position = $6, description = $7, image_data = COALESCE($8::text, image_data), price = $9, daily_income = $10, duration_days = $11, purchase_bonus = 0, total_slots = $12 WHERE name = $13',
           [String(plan.price), String(plan.dailyIncome), `${plan.durationDays} days`, plan.status, plan.description, plan.position, plan.description, plan.imageData, plan.price, plan.dailyIncome, plan.durationDays, plan.totalSlots, name]);
-        return json({ plan: planView((await pool.query('SELECT * FROM plans WHERE name = $1', [name])).rows[0]) });
+        return json({ plan: planView((await pool.query(`SELECT ${planColumns} FROM plans WHERE name = $1`, [name])).rows[0]) });
       }
 
       if (adminPlanRoute && method === 'DELETE') {
@@ -1077,8 +1110,8 @@ export default {
       }
 
       if (path === '/api/wallet/withdraw/account' && method === 'GET') {
-        const account = await pool.query('SELECT account_holder_name AS "accountHolderName", phone_number AS "phoneNumber", payment_method AS "paymentMethod", created_at AS "createdAt", updated_at AS "updatedAt" FROM withdrawal_accounts WHERE user_id = $1', [user.id]);
-        return json({ account: account.rows[0] ?? null });
+        const account = await withdrawalAccountFor(user.id);
+        return json({ account });
       }
 
       if (path === '/api/wallet/transactions' && method === 'GET') {
@@ -1146,13 +1179,16 @@ export default {
         const blocked = featureGuard('withdraw'); if (blocked) return blocked;
         const input = await readBody(request);
         const accountHolderName = String(input.accountHolderName ?? '').trim().slice(0, 120);
-        const phoneNumber = String(input.phoneNumber ?? '').replace(/[\s-]/g, '');
         const paymentMethod = String(input.paymentMethod ?? '');
-        if (!accountHolderName || !normalizePhone(phoneNumber, user.countryCode) || !withdrawalMethodCodes.includes(paymentMethod) || !(await withdrawalMethodEnabled(paymentMethod, user.countryCode))) {
+        const isCrypto = paymentMethod === cryptoMethod;
+        const walletAddress = isCrypto ? String(input.walletAddress ?? '').trim() : '';
+        const phoneNumber = isCrypto ? '' : String(input.phoneNumber ?? '').replace(/[\s-]/g, '');
+        const detailsValid = isCrypto ? validTronAddress(walletAddress) && Number(user.unitsPerUsdt) > 0 : Boolean(normalizePhone(phoneNumber, user.countryCode));
+        if (!accountHolderName || !detailsValid || !withdrawalMethodCodes.includes(paymentMethod) || !(await withdrawalMethodEnabled(paymentMethod, user.countryCode))) {
           return json({ error: 'Choose a payment method enabled for your country and enter a valid phone number.' }, 400);
         }
-        await pool.query(`INSERT INTO withdrawal_accounts (user_id, account_holder_name, phone_number, payment_method, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$5)
-          ON CONFLICT (user_id) DO UPDATE SET account_holder_name = EXCLUDED.account_holder_name, phone_number = EXCLUDED.phone_number, payment_method = EXCLUDED.payment_method, updated_at = EXCLUDED.updated_at`, [user.id, accountHolderName, phoneNumber, paymentMethod, now()]);
+        await pool.query(`INSERT INTO withdrawal_accounts (user_id, account_holder_name, phone_number, wallet_address, payment_method, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$6)
+          ON CONFLICT (user_id) DO UPDATE SET account_holder_name = EXCLUDED.account_holder_name, phone_number = EXCLUDED.phone_number, wallet_address = EXCLUDED.wallet_address, payment_method = EXCLUDED.payment_method, updated_at = EXCLUDED.updated_at`, [user.id, accountHolderName, phoneNumber, walletAddress, paymentMethod, now()]);
         return json({ account: await withdrawalAccountFor(user.id) });
       }
 
@@ -1174,16 +1210,17 @@ export default {
         const minimum = Number(depositMethod.minimum_amount);
         const maximum = Number(depositMethod.maximum_amount);
         if (amount < minimum || amount > maximum) return json({ error: `Amount must be between ${localAmount(minimum, user.unitsPerRwf).toLocaleString()} and ${localAmount(maximum, user.unitsPerRwf).toLocaleString()} ${user.currencyCode} for ${depositMethod.name}.` }, 400);
-        const receiving = await countrySettings(depositMethod.receiving_country_code ?? user.countryCode);
-        const receivingRate = Number(receiving?.unitsPerRwf);
-        const paymentAmount = receiving && receivingRate > 0 ? localAmount(amount, receivingRate) : 0;
+        const isCrypto = depositMethod.crypto_network === cryptoNetworkTrc20;
+        const receiving = isCrypto ? { countryCode: user.countryCode, currencyCode: 'USDT' } : await countrySettings(depositMethod.receiving_country_code ?? user.countryCode);
+        const receivingRate = isCrypto ? Number(user.unitsPerUsdt) : Number(receiving?.unitsPerRwf);
+        const paymentAmount = receiving && receivingRate > 0 ? (isCrypto ? usdtAmount(amount, user.unitsPerRwf, receivingRate) : localAmount(amount, receivingRate)) : 0;
         if (!receiving || receivingRate <= 0 || paymentAmount <= 0) return json({ error: 'The receiving payment account does not have a valid exchange rate.' }, 400);
         const id = randomUUID();
         const timestamp = now();
         const inserted = await pool.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, sender_name, receiver_name, phone_number, payment_method, deposit_method_id, deposit_method_name, screenshot_data, status, provider, internal_reference,
-          deposit_receiving_country_code, deposit_receiving_currency_code, deposit_receiving_exchange_rate, deposit_payment_amount, created_at, updated_at)
-          VALUES ($1,$2,'DEPOSIT',$3,$4,'',$5,$6,$7,$8,$9,'PENDING','ADMIN_REVIEW',$10,$11,$12,$13,$14,$15,$15) RETURNING *`,
-        [id, user.id, amount, senderName, phoneNumber, depositMethod.name, depositMethod.code, depositMethod.name, screenshotData, `DEP-${randomUUID()}`, receiving.countryCode, receiving.currencyCode, receivingRate, paymentAmount, timestamp]);
+          deposit_receiving_country_code, deposit_receiving_currency_code, deposit_receiving_exchange_rate, deposit_payment_amount, crypto_network, crypto_amount, crypto_units_per_usdt, crypto_address, created_at, updated_at)
+          VALUES ($1,$2,'DEPOSIT',$3,$4,'',$5,$6,$7,$8,$9,'PENDING','ADMIN_REVIEW',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19) RETURNING *`,
+        [id, user.id, amount, senderName, phoneNumber, depositMethod.name, depositMethod.code, depositMethod.name, screenshotData, `DEP-${randomUUID()}`, receiving.countryCode, receiving.currencyCode, receivingRate, paymentAmount, isCrypto ? cryptoNetworkTrc20 : '', isCrypto ? paymentAmount : null, isCrypto ? receivingRate : null, isCrypto ? depositMethod.account_number : null, timestamp]);
         return json({ transaction: transactionView(inserted.rows[0], user) }, 201);
       }
 
@@ -1195,7 +1232,9 @@ export default {
         const amount = displayAmount ? convertLocalToRwf(displayAmount, user.unitsPerRwf) : null;
         const account = await withdrawalAccountFor(user.id);
         if (!account) return json({ error: withdrawalRoute === 'preview' ? 'Bind a withdrawal account before continuing.' : 'Bind a withdrawal account before requesting a withdrawal.' }, 400);
-        if (!amount || !displayAmount || !normalizePhone(account.phoneNumber, user.countryCode) || !withdrawalMethodCodes.includes(account.paymentMethod) || !(await withdrawalMethodEnabled(account.paymentMethod, user.countryCode))) {
+        const isCrypto = account.paymentMethod === cryptoMethod;
+        const detailsValid = isCrypto ? validTronAddress(account.walletAddress) && Number(user.unitsPerUsdt) > 0 : Boolean(normalizePhone(account.phoneNumber, user.countryCode));
+        if (!amount || !displayAmount || !detailsValid || !withdrawalMethodCodes.includes(account.paymentMethod) || !(await withdrawalMethodEnabled(account.paymentMethod, user.countryCode))) {
           return json({ error: 'Your bound withdrawal account is invalid or its provider is unavailable in your country.' }, 400);
         }
         const calculation = await withdrawalFee(amount);
@@ -1205,7 +1244,7 @@ export default {
         if (amount > balance.availableBalance) return json({ error: 'Withdrawal amount exceeds available balance.' }, 400);
         if (withdrawalRoute === 'preview') {
           return json({
-            channel: account.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'MTN MoMo', receiverName: account.accountHolderName, phoneNumber: account.phoneNumber, paymentMethod: account.paymentMethod,
+            channel: isCrypto ? 'USDT (TRC20)' : account.paymentMethod === 'AIRTEL_MONEY' ? 'Airtel Money' : 'MTN MoMo', receiverName: account.accountHolderName, phoneNumber: account.phoneNumber, paymentMethod: account.paymentMethod, walletAddress: account.walletAddress ?? '', cryptoAmount: isCrypto ? usdtAmount(calculation.amountReceived, user.unitsPerRwf, Number(user.unitsPerUsdt)) : null, cryptoUnitsPerUsdt: isCrypto ? Number(user.unitsPerUsdt) : null,
             availableBalance: balance.availableBalance, displayAvailableBalance: balance.displayAvailableBalance, displayWithdrawalAmount: displayAmount,
             displayWithdrawalFee: localAmount(calculation.withdrawalFee, user.unitsPerRwf), displayAmountReceived: localAmount(calculation.amountReceived, user.unitsPerRwf), currencyCode: user.currencyCode, ...calculation,
           });
@@ -1220,9 +1259,9 @@ export default {
           const commissionAmount = Math.min(amount, Math.max(0, Number(totals.rows[0].credited) - Number(totals.rows[0].allocated)));
           const timestamp = now();
           await client.query('UPDATE wallet_accounts SET available_balance = available_balance - $1, reserved_balance = reserved_balance + $1, updated_at = $2 WHERE user_id = $3', [amount, timestamp, user.id]);
-          await client.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, withdrawal_fee, amount_received, reserved_amount, commission_amount, sender_name, receiver_name, phone_number, payment_method, status, provider, internal_reference, created_at, updated_at)
-            VALUES ($1,$2,'WITHDRAWAL',$3,$4,$5,$6,$7,'',$8,$9,$10,'PENDING','ADMIN_REVIEW',$11,$12,$12)`,
-          [id, user.id, amount, calculation.withdrawalFee, calculation.amountReceived, amount, commissionAmount, account.accountHolderName, account.phoneNumber, account.paymentMethod, `WDR-${randomUUID()}`, timestamp]);
+          await client.query(`INSERT INTO wallet_transactions (id, user_id, type, amount, withdrawal_fee, amount_received, reserved_amount, commission_amount, sender_name, receiver_name, phone_number, payment_method, status, provider, internal_reference, crypto_network, crypto_amount, crypto_units_per_usdt, crypto_address, created_at, updated_at)
+            VALUES ($1,$2,'WITHDRAWAL',$3,$4,$5,$6,$7,'',$8,$9,$10,'PENDING','ADMIN_REVIEW',$11,$12,$13,$14,$15,$16,$16)`,
+          [id, user.id, amount, calculation.withdrawalFee, calculation.amountReceived, amount, commissionAmount, account.accountHolderName, account.phoneNumber, account.paymentMethod, `WDR-${randomUUID()}`, isCrypto ? cryptoNetworkTrc20 : '', isCrypto ? usdtAmount(calculation.amountReceived, user.unitsPerRwf, Number(user.unitsPerUsdt)) : null, isCrypto ? Number(user.unitsPerUsdt) : null, isCrypto ? account.walletAddress : null, timestamp]);
         });
         const created = await pool.query('SELECT * FROM wallet_transactions WHERE id = $1', [id]);
         return json({ transaction: transactionView(created.rows[0], user) }, 201);
@@ -1353,15 +1392,15 @@ export default {
 
       if (path === '/api/admin/deposit-methods' && method === 'POST') {
         if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
-        const parsed = parseDepositMethod(await readBody(request));
+        const parsed = await parseDepositMethod(await readBody(request));
         if ('error' in parsed) return json({ error: parsed.error }, 400);
         const item = parsed.value;
         const count = await pool.query('SELECT count(*)::integer AS count FROM deposit_methods WHERE country_code = $1', [item.countryCode]);
         if (count.rows[0].count >= 10) return json({ error: `You can configure up to 10 deposit methods for ${item.countryCode}.` }, 409);
         const id = `DEP-${randomUUID()}`;
-        await pool.query(`INSERT INTO deposit_methods (code, name, enabled, provider, account_name, account_number, instructions, ussd_template, minimum_amount, maximum_amount, logo_data, position, updated_at, country_code, cross_border_enabled, receiving_country_code)
-          VALUES ($1,$2,$3,'ADMIN_REVIEW',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [id, item.name, item.enabled, item.accountName, item.accountNumber, item.instructions, item.ussdTemplate, item.minimumAmount, item.maximumAmount, item.logoData, item.position, now(), item.countryCode, item.crossBorderEnabled, item.receivingCountryCode]);
+        await pool.query(`INSERT INTO deposit_methods (code, name, enabled, provider, account_name, account_number, instructions, ussd_template, minimum_amount, maximum_amount, logo_data, position, updated_at, country_code, cross_border_enabled, receiving_country_code, crypto_network)
+          VALUES ($1,$2,$3,'ADMIN_REVIEW',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [id, item.name, item.enabled, item.accountName, item.accountNumber, item.instructions, item.ussdTemplate, item.minimumAmount, item.maximumAmount, item.logoData, item.position, now(), item.countryCode, item.crossBorderEnabled, item.receivingCountryCode, item.cryptoNetwork]);
         return json({ method: await depositMethodView((await pool.query('SELECT * FROM deposit_methods WHERE code = $1', [id])).rows[0]) }, 201);
       }
 
@@ -1370,13 +1409,13 @@ export default {
         if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
         const code = decodeURIComponent(adminDepositMethodRoute[1]);
         if (!(await pool.query('SELECT 1 FROM deposit_methods WHERE code = $1', [code])).rowCount) return json({ error: 'Deposit method not found.' }, 404);
-        const parsed = parseDepositMethod(await readBody(request));
+        const parsed = await parseDepositMethod(await readBody(request));
         if ('error' in parsed) return json({ error: parsed.error }, 400);
         const item = parsed.value;
         const count = await pool.query('SELECT count(*)::integer AS count FROM deposit_methods WHERE country_code = $1 AND code <> $2', [item.countryCode, code]);
         if (count.rows[0].count >= 10) return json({ error: `You can configure up to 10 deposit methods for ${item.countryCode}.` }, 409);
-        await pool.query('UPDATE deposit_methods SET name = $1, enabled = $2, account_name = $3, account_number = $4, instructions = $5, ussd_template = $6, minimum_amount = $7, maximum_amount = $8, logo_data = $9, position = $10, updated_at = $11, country_code = $12, cross_border_enabled = $13, receiving_country_code = $14 WHERE code = $15',
-          [item.name, item.enabled, item.accountName, item.accountNumber, item.instructions, item.ussdTemplate, item.minimumAmount, item.maximumAmount, item.logoData, item.position, now(), item.countryCode, item.crossBorderEnabled, item.receivingCountryCode, code]);
+        await pool.query('UPDATE deposit_methods SET name = $1, enabled = $2, account_name = $3, account_number = $4, instructions = $5, ussd_template = $6, minimum_amount = $7, maximum_amount = $8, logo_data = $9, position = $10, updated_at = $11, country_code = $12, cross_border_enabled = $13, receiving_country_code = $14, crypto_network = $15 WHERE code = $16',
+          [item.name, item.enabled, item.accountName, item.accountNumber, item.instructions, item.ussdTemplate, item.minimumAmount, item.maximumAmount, item.logoData, item.position, now(), item.countryCode, item.crossBorderEnabled, item.receivingCountryCode, item.cryptoNetwork, code]);
         return json({ method: await depositMethodView((await pool.query('SELECT * FROM deposit_methods WHERE code = $1', [code])).rows[0]) });
       }
 
@@ -1401,8 +1440,11 @@ export default {
         }
         const selected = input.withdrawalMethods;
         if (selected !== undefined && (!Array.isArray(selected) || selected.some((code) => !withdrawalMethodCodes.includes(String(code))))) return json({ error: 'Choose valid withdrawal methods.' }, 400);
+        const unitsPerUsdt = input.unitsPerUsdt === undefined ? Number(current.unitsPerUsdt) || 0 : Number(input.unitsPerUsdt);
+        if (!Number.isFinite(unitsPerUsdt) || unitsPerUsdt < 0) return json({ error: 'Enter a valid USDT rate (0 or more).' }, 400);
+        if (Array.isArray(selected) && selected.includes(cryptoMethod) && unitsPerUsdt <= 0) return json({ error: 'Enter a USDT rate before enabling USDT withdrawals.' }, 400);
         await withTransaction(async (client) => {
-          await client.query('UPDATE country_settings SET enabled = $1, units_per_rwf = $2, updated_at = $3 WHERE country_code = $4', [enabled ? 1 : 0, unitsPerRwf, now(), countryCode]);
+          await client.query('UPDATE country_settings SET enabled = $1, units_per_rwf = $2, units_per_usdt = $3, updated_at = $4 WHERE country_code = $5', [enabled ? 1 : 0, unitsPerRwf, unitsPerUsdt, now(), countryCode]);
           if (Array.isArray(selected)) {
             const all = await client.query('SELECT code FROM withdrawal_methods');
             for (const row of all.rows) {
@@ -1411,9 +1453,9 @@ export default {
             }
           }
         });
-        await auditAdmin(user.id, null, 'COUNTRY_CURRENCY_UPDATED', { enabled: Boolean(current.enabled), unitsPerRwf: Number(current.unitsPerRwf) }, { enabled, unitsPerRwf, withdrawalMethods: selected ?? null });
+        await auditAdmin(user.id, null, 'COUNTRY_CURRENCY_UPDATED', { enabled: Boolean(current.enabled), unitsPerRwf: Number(current.unitsPerRwf), unitsPerUsdt: Number(current.unitsPerUsdt) || 0 }, { enabled, unitsPerRwf, unitsPerUsdt, withdrawalMethods: selected ?? null });
         const updated = await countrySettings(countryCode);
-        return json({ ...updated, enabled: Boolean(updated?.enabled), unitsPerRwf: Number(updated?.unitsPerRwf ?? 1) });
+        return json({ ...updated, enabled: Boolean(updated?.enabled), unitsPerRwf: Number(updated?.unitsPerRwf ?? 1), unitsPerUsdt: Number(updated?.unitsPerUsdt ?? 0) });
       }
 
       const edgesCte = `WITH RECURSIVE referral_edges(user_id, sponsor_user_id, created_at) AS (

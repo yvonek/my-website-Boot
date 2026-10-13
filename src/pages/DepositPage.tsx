@@ -31,7 +31,7 @@ import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { TransactionHistory } from '../components/TransactionHistory';
 import { api } from '../api';
-import { convertCurrencyAmount, formatCurrencyAmount, isValidCountryPhone } from '../api/money';
+import { convertCurrencyAmount, formatCurrencyAmount, isValidCountryPhone, usdtAmount } from '../api/money';
 import type { DepositPaymentMethod, WalletTransaction } from '../api/types';
 
 const maxScreenshotBytes = 4 * 1024 * 1024;
@@ -76,7 +76,9 @@ export function DepositPage() {
   const numericAmount = Number(amount);
   const amountIsValid = Boolean(selectedMethod && Number.isSafeInteger(numericAmount) && numericAmount >= selectedMethod.minimumAmount && numericAmount <= selectedMethod.maximumAmount);
   const receivingCurrencyCode = selectedMethod?.receivingCurrencyCode ?? currencyCode;
-  const paymentAmount = amountIsValid && selectedMethod ? convertCurrencyAmount(numericAmount, selectedMethod.customerUnitsPerRwf ?? 1, selectedMethod.receivingUnitsPerRwf ?? selectedMethod.customerUnitsPerRwf ?? 1) : 0;
+  const isCryptoMethod = selectedMethod?.cryptoNetwork === 'TRC20';
+  const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? usdtAmount(numericAmount, Number(selectedMethod.unitsPerUsdt ?? 0)) : convertCurrencyAmount(numericAmount, selectedMethod.customerUnitsPerRwf ?? 1, selectedMethod.receivingUnitsPerRwf ?? selectedMethod.customerUnitsPerRwf ?? 1)) : 0;
+  const paymentLabel = isCryptoMethod ? `${paymentAmount.toFixed(2)} USDT` : formatCurrencyAmount(paymentAmount, receivingCurrencyCode);
   const ussdCode = selectedMethod?.ussdTemplate && amountIsValid ? buildUssd(selectedMethod.ussdTemplate, selectedMethod.accountNumber, paymentAmount) : '';
   const copyValue = async (value: string, label: string) => {
     try { await navigator.clipboard.writeText(value); setCopied(label); window.setTimeout(() => setCopied(''), 1600); }
@@ -116,12 +118,13 @@ export function DepositPage() {
     </section>
 
     <div className="deposit-amount-field"><Field label={`Amount (${currencyCode})`}><Input type="number" min={selectedMethod?.minimumAmount ?? 1} max={selectedMethod?.maximumAmount} value={amount} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setAmount(data.value)} placeholder={selectedMethod ? `${selectedMethod.minimumAmount}–${selectedMethod.maximumAmount}` : 'Enter amount'} /></Field></div>
-    {selectedMethod?.ussdTemplate && <div className="deposit-direct-action">{ussdCode ? <a className="deposit-pay-now" href={`tel:${encodeURIComponent(ussdCode)}`}><CallRegular /><span>PAY {formatCurrencyAmount(paymentAmount, receivingCurrencyCode)} NOW</span></a> : <Button className="deposit-pay-now" appearance="primary" disabled icon={<CallRegular />}>Enter an amount in range</Button>}</div>}
+    {selectedMethod?.ussdTemplate && <div className="deposit-direct-action">{ussdCode ? <a className="deposit-pay-now" href={`tel:${encodeURIComponent(ussdCode)}`}><CallRegular /><span>PAY {paymentLabel} NOW</span></a> : <Button className="deposit-pay-now" appearance="primary" disabled icon={<CallRegular />}>Enter an amount in range</Button>}</div>}
 
     {selectedMethod && <Card className="deposit-details-card">
       <div className="deposit-detail-row"><div><span>Merchant name</span><strong>{selectedMethod.accountName}</strong></div><Button appearance="secondary" icon={copied === 'merchant' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountName, 'merchant')}>{copied === 'merchant' ? 'Copied' : 'Copy'}</Button></div>
+      {isCryptoMethod && <div className="deposit-detail-row"><div><span>TRC20 USDT wallet address</span><strong>{selectedMethod.accountNumber}</strong></div><Button appearance="secondary" icon={copied === 'wallet' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountNumber, 'wallet')}>{copied === 'wallet' ? 'Copied' : 'Copy'}</Button></div>}
       {selectedMethod.instructions && <Text className="deposit-instructions">{selectedMethod.instructions}</Text>}
-      {amountIsValid && <Text className="deposit-instructions">Send {formatCurrencyAmount(paymentAmount, receivingCurrencyCode)} to the receiving account{selectedMethod.receivingCountryCode && selectedMethod.receivingCountryCode !== countryCode ? ` in ${selectedMethod.receivingCountryCode}` : ''}.</Text>}
+      {amountIsValid && <Text className="deposit-instructions">Send {paymentLabel} to {isCryptoMethod ? 'the TRC20 wallet address above' : 'the receiving account'}{!isCryptoMethod && selectedMethod.receivingCountryCode && selectedMethod.receivingCountryCode !== countryCode ? ` in ${selectedMethod.receivingCountryCode}` : ''}.</Text>}
       {!selectedMethod.ussdTemplate && <Text className="deposit-instructions">A payment shortcut is not configured for this method. Use the merchant details above.</Text>}
     </Card>}
 
@@ -130,7 +133,7 @@ export function DepositPage() {
       <Field label="Full name (name on the paying account)"><Input value={senderName} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setSenderName(data.value)} placeholder="Enter payer's full name" /></Field>
       <Field label="Payment screenshot"><input className="deposit-screenshot-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void chooseScreenshot(event.currentTarget.files?.[0])} /><span className="deposit-screenshot-note">PNG, JPEG, or WebP · up to 4 MB</span>{screenshotName && <span className="deposit-screenshot-name">{screenshotName}</span>}</Field>
       {depositError && <MessageBar className="deposit-error-message" intent="error"><MessageBarBody>{depositError}</MessageBarBody></MessageBar>}
-      {depositSuccess && <MessageBar className="deposit-success-message" intent="success"><MessageBarBody>Deposit submitted: {formatCurrencyAmount(depositSuccess.displayAmount ?? depositSuccess.amount, depositSuccess.currencyCode ?? currencyCode)}{depositSuccess.depositPaymentAmount != null && depositSuccess.depositReceivingCurrencyCode ? ` · Pay ${formatCurrencyAmount(depositSuccess.depositPaymentAmount, depositSuccess.depositReceivingCurrencyCode)} to ${depositSuccess.depositReceivingCountryCode}` : ''}. Method: {depositSuccess.depositMethodName}. Reference: {depositSuccess.internalReference}</MessageBarBody></MessageBar>}
+      {depositSuccess && <MessageBar className="deposit-success-message" intent="success"><MessageBarBody>Deposit submitted: {formatCurrencyAmount(depositSuccess.displayAmount ?? depositSuccess.amount, depositSuccess.currencyCode ?? currencyCode)}{depositSuccess.cryptoNetwork === 'TRC20' && (depositSuccess.cryptoAmount ?? depositSuccess.depositPaymentAmount) != null ? ` · Send ${Number(depositSuccess.cryptoAmount ?? depositSuccess.depositPaymentAmount).toFixed(2)} USDT (TRC20)` : depositSuccess.depositPaymentAmount != null && depositSuccess.depositReceivingCurrencyCode ? ` · Pay ${formatCurrencyAmount(depositSuccess.depositPaymentAmount, depositSuccess.depositReceivingCurrencyCode)} to ${depositSuccess.depositReceivingCountryCode}` : ''}. Method: {depositSuccess.depositMethodName}. Reference: {depositSuccess.internalReference}</MessageBarBody></MessageBar>}
       <Button className="deposit-submit-button" appearance="primary" disabled={depositStatus === 'submitting' || !selectedMethod} onClick={submitDeposit}>{depositStatus === 'submitting' ? 'Submitting deposit...' : 'Submit deposit'}</Button>
     </Card>
     <TransactionHistory typeFilter="DEPOSIT" showHeading refreshKey={depositSuccess?.id ?? ''} />
