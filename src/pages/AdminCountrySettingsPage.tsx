@@ -39,6 +39,11 @@ export function AdminCountrySettingsPage() {
       setMessage(country.countryCode === 'RW' ? 'Rwanda must remain exactly 1 RWF per RWF.' : 'Set a positive exchange rate before enabling this country.');
       return;
     }
+    const usdtSelected = country.withdrawalMethods.some((method) => method.enabled && method.code === 'USDT_TRC20');
+    if (usdtSelected && !(Number(country.unitsPerUsdt) > 0)) {
+      setMessage(`Enter a USDT (TRC20) rate for ${country.countryName} before enabling USDT withdrawals.`);
+      return;
+    }
     setSaving(country.countryCode);
     setMessage('');
     try {
