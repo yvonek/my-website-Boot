@@ -30,7 +30,7 @@ const navigation: { id: AdminView; label: string; icon: typeof WalletRegular }[]
   { id: 'live', label: 'Live users', icon: PeopleRegular },
   { id: 'messages', label: 'Messages', icon: ClipboardTaskRegular },
   { id: 'settings', label: 'Settings', icon: SettingsRegular },
-  { id: 'countries', label: 'Countries', icon: SettingsRegular },
+  { id: 'countries', label: 'Countries & USDT', icon: SettingsRegular },
   { id: 'audit', label: 'Audit log', icon: ClipboardTaskRegular },
 ];
 
