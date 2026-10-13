@@ -19,5 +19,6 @@ export function PlansPage({ data, state, onRetry, onPurchased }: { data: Dashboa
     setPurchasedProductNames((current) => current.includes(updatedPlan.name) ? current : [...current, updatedPlan.name]);
     onPurchased(updatedPlan);
   };
-  return <div className="page-stack plans-page"><div className="page-intro"><Text className="hero-eyebrow">Investment products</Text><Title1>Choose a product.</Title1><Text className="muted">Review product terms and available slots before purchasing.</Text></div><div className="plan-grid plan-grid--wide">{data.plans.map((plan) => <PlanCard key={plan.id ?? plan.name} plan={plan} alreadyPurchased={purchasedProductNames.includes(plan.name)} onPurchased={handlePurchased} />)}</div></div>;
+  const sortedPlans = [...data.plans].sort((a, b) => (a.displayPrice ?? a.price) - (b.displayPrice ?? b.price));
+  return <div className="page-stack plans-page"><div className="page-intro"><Text className="hero-eyebrow">Investment products</Text><Title1>Choose a product.</Title1><Text className="muted">Review product terms and available slots before purchasing.</Text></div><div className="plan-grid plan-grid--wide">{sortedPlans.map((plan) => <PlanCard key={plan.id ?? plan.name} plan={plan} alreadyPurchased={purchasedProductNames.includes(plan.name)} onPurchased={handlePurchased} />)}</div></div>;
 }

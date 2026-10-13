@@ -65,7 +65,7 @@ export function HomeDashboard({ data, state, onRetry }: { data: DashboardData | 
     }
   };
 
-  const homePlans = data?.plans.map((plan) => homePlanUpdates[plan.id ?? plan.name] ?? plan) ?? [];
+  const homePlans = (data?.plans.map((plan) => homePlanUpdates[plan.id ?? plan.name] ?? plan) ?? []).sort((a, b) => (a.displayPrice ?? a.price) - (b.displayPrice ?? b.price));
   const refreshHomePlan = (updatedPlan: Plan) => {
     setHomePlanUpdates((current) => ({ ...current, [updatedPlan.id ?? updatedPlan.name]: updatedPlan }));
     setPurchasedProductNames((current) => current.includes(updatedPlan.name) ? current : [...current, updatedPlan.name]);

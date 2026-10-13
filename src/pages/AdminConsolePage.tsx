@@ -88,7 +88,7 @@ export function AdminConsolePage({ adminName, onLogout }: { adminName: string; o
 
   const loadPlans = async () => {
     const { plans: adminPlans } = await api.getAdminPlans();
-    setPlans(adminPlans);
+    setPlans([...adminPlans].sort((a, b) => a.price - b.price));
   };
 
   const loadAudit = async () => {
