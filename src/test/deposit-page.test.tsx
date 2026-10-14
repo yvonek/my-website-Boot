@@ -85,7 +85,7 @@ describe('DepositPage merchant details', () => {
 
     render(<DepositPage />);
 
-    fireEvent.change(await screen.findByPlaceholderText('1000–500000'), { target: { value: '15000' } });
+    fireEvent.change(await screen.findByLabelText('Amount (USDT)'), { target: { value: '16.32' } });
 
     expect(await screen.findByText('Amount in USDT')).toBeInTheDocument();
     expect(screen.getByText('16.32 USDT')).toBeInTheDocument();
@@ -97,7 +97,7 @@ describe('DepositPage merchant details', () => {
 
     render(<DepositPage />);
 
-    fireEvent.change(await screen.findByPlaceholderText('1000–500000'), { target: { value: '15000' } });
+    fireEvent.change(await screen.findByLabelText('Amount (UGX)'), { target: { value: '15000' } });
 
     expect(await screen.findByText('Amount in UGX')).toBeInTheDocument();
     expect(screen.getByText('52,500 UGX')).toBeInTheDocument();

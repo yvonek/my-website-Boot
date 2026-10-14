@@ -36,6 +36,26 @@ import type { DepositPaymentMethod, WalletTransaction } from '../api/types';
 
 const maxScreenshotBytes = 4 * 1024 * 1024;
 
+// Converts an RWF amount (API and limits unit) into the method input currency (UGX, BIF, or USDT).
+function rwfToInputAmount(method: DepositPaymentMethod, amountRwf: number) {
+  if (method.cryptoNetwork === 'TRC20') return usdtDepositAmount(amountRwf, method.customerUnitsPerRwf ?? 1, Number(method.unitsPerUsdt ?? 0), method);
+  return convertCurrencyAmount(amountRwf, 1, method.receivingUnitsPerRwf ?? method.customerUnitsPerRwf ?? 1);
+}
+
+// Inverse of rwfToInputAmount: converts a typed method-currency amount into RWF. Rounded to whole RWF.
+function inputAmountToRwf(method: DepositPaymentMethod, amount: number) {
+  if (method.cryptoNetwork === 'TRC20') {
+    const unitsPerUsdt = Number(method.unitsPerUsdt ?? 0);
+    const customerUnitsPerRwf = method.customerUnitsPerRwf ?? 1;
+    if (!(unitsPerUsdt > 0) || !(customerUnitsPerRwf > 0)) return NaN;
+    const feeValue = Number.isFinite(method.usdtDepositFeeValue) ? Number(method.usdtDepositFeeValue) : 0;
+    if (method.usdtDepositFeeType === 'FIXED') return Math.round(amount * unitsPerUsdt / customerUnitsPerRwf) - feeValue;
+    const usdtBeforeFee = method.usdtDepositFeeType === 'PERCENTAGE' ? amount / (1 + feeValue / 100) : amount;
+    return Math.round(usdtBeforeFee * unitsPerUsdt / customerUnitsPerRwf);
+  }
+  return convertCurrencyAmount(amount, method.receivingUnitsPerRwf ?? method.customerUnitsPerRwf ?? 1, 1);
+}
+
 function buildUssd(template: string, merchantNumber: string, amount: number) { return template.replace(/\{\{?\s*number\s*\}\}?|\bnumber\b/gi, merchantNumber.replace(/[\s-]/g, '')).replace(/\{\{?\s*(?:amount|frw)\s*\}\}?|\b(?:amount|frw)\b/gi, String(amount)); }
 function readFileAsDataUrl(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Could not read screenshot.')); reader.onerror = () => reject(new Error('Could not read screenshot.')); reader.readAsDataURL(file); }); }
 
@@ -74,10 +94,16 @@ export function DepositPage() {
   const countryCode = selectedMethod?.countryCode ?? methods[0]?.countryCode ?? 'RW';
   const showMerchantDetails = countryCode === 'BI' || countryCode === 'UG';
   const phonePlaceholder = countryCode === 'BI' ? '06xxxxxxx' : countryCode === 'UG' ? '077xxxxxxx' : '078xxxxxxx';
-  const numericAmount = Number(amount);
-  const amountIsValid = Boolean(selectedMethod && Number.isSafeInteger(numericAmount) && numericAmount >= selectedMethod.minimumAmount && numericAmount <= selectedMethod.maximumAmount);
   const receivingCurrencyCode = selectedMethod?.receivingCurrencyCode ?? currencyCode;
   const isCryptoMethod = selectedMethod?.cryptoNetwork === 'TRC20';
+  const inputCurrencyCode = isCryptoMethod ? 'USDT' : receivingCurrencyCode;
+  const formatInputAmount = (value: number) => isCryptoMethod ? `${value.toFixed(2)} USDT` : formatCurrencyAmount(value, receivingCurrencyCode);
+  const inputMinimum = selectedMethod ? rwfToInputAmount(selectedMethod, selectedMethod.minimumAmount) : 0;
+  const inputMaximum = selectedMethod ? rwfToInputAmount(selectedMethod, selectedMethod.maximumAmount) : 0;
+  // The typed amount is in the method currency; numericAmount is the RWF value sent to the API.
+  const inputNumber = Number(amount);
+  const numericAmount = selectedMethod && inputNumber > 0 ? inputAmountToRwf(selectedMethod, inputNumber) : NaN;
+  const amountIsValid = Boolean(selectedMethod && Number.isSafeInteger(numericAmount) && numericAmount >= selectedMethod.minimumAmount && numericAmount <= selectedMethod.maximumAmount);
   const customerUnitsPerRwf = selectedMethod?.customerUnitsPerRwf ?? 1;
   const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? usdtDepositAmount(numericAmount, customerUnitsPerRwf, Number(selectedMethod.unitsPerUsdt ?? 0), selectedMethod) : convertCurrencyAmount(numericAmount, 1, selectedMethod.receivingUnitsPerRwf ?? customerUnitsPerRwf)) : 0;
   const paymentLabel = isCryptoMethod ? `${paymentAmount.toFixed(2)} USDT` : formatCurrencyAmount(paymentAmount, receivingCurrencyCode);
@@ -102,7 +128,7 @@ export function DepositPage() {
 
   const submitDeposit = async () => {
     if (!selectedMethod) { setDepositError('Select an active payment method.'); return; }
-    if (!Number.isSafeInteger(numericAmount) || numericAmount < selectedMethod.minimumAmount || numericAmount > selectedMethod.maximumAmount) { setDepositError(`Enter an amount between ${formatCurrencyAmount(selectedMethod.minimumAmount, 'RWF')} and ${formatCurrencyAmount(selectedMethod.maximumAmount, 'RWF')}.`); return; }
+    if (!Number.isSafeInteger(numericAmount) || numericAmount < selectedMethod.minimumAmount || numericAmount > selectedMethod.maximumAmount) { setDepositError(`Enter an amount between ${formatInputAmount(inputMinimum)} and ${formatInputAmount(inputMaximum)}.`); return; }
     if (!senderName.trim()) { setDepositError('Enter the full name on the paying account.'); return; }
     if (!isValidCountryPhone(phoneNumber, countryCode)) { setDepositError(`Enter a valid ${selectedMethod.countryCode ?? countryCode} phone number.`); return; }
     if (!screenshotData) { setDepositError('Attach a screenshot of your payment.'); return; }
@@ -123,7 +149,7 @@ export function DepositPage() {
       </button>)}</div> : <Card className="deposit-empty-methods"><Text>{depositError || 'No active payment methods are currently available. Please contact support.'}</Text>{depositError && <Button appearance="secondary" onClick={() => void loadMethods()}>Retry</Button>}</Card>}
     </section>
 
-    <div className="deposit-amount-field"><Field label="Amount (RWF)"><Input type="number" min={selectedMethod?.minimumAmount ?? 1} max={selectedMethod?.maximumAmount} value={amount} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setAmount(data.value)} placeholder={selectedMethod ? `${selectedMethod.minimumAmount}–${selectedMethod.maximumAmount}` : 'Enter amount'} /></Field></div>
+    <div className="deposit-amount-field"><Field label={`Amount (${inputCurrencyCode})`}><Input type="number" min={inputMinimum} max={inputMaximum} step={isCryptoMethod ? '0.01' : '1'} value={amount} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setAmount(data.value)} placeholder={selectedMethod ? `${formatInputAmount(inputMinimum)} – ${formatInputAmount(inputMaximum)}` : 'Enter amount'} /></Field></div>
     {showMerchantDetails && selectedMethod?.ussdTemplate && <div className="deposit-direct-action">{ussdCode ? <a className="deposit-pay-now" href={`tel:${encodeURIComponent(ussdCode)}`}><CallRegular /><span>PAY {paymentLabel} NOW</span></a> : <Button className="deposit-pay-now" appearance="primary" disabled icon={<CallRegular />}>Enter an amount in range</Button>}</div>}
 
     {selectedMethod && <Card className="deposit-details-card">
