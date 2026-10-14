@@ -15,6 +15,8 @@ function json(body: unknown, status = 200, headers: HeadersInit = {}) {
 
 function tokenHash(token: string) { return createHash('sha256').update(token).digest('hex'); }
 function now() { return new Date().toISOString(); }
+// Start of the current calendar day in Rwanda (UTC+2, no DST).
+function rwandaDayStart() { const offset = 2 * 60 * 60 * 1000; return new Date(Math.floor((Date.now() + offset) / 86400000) * 86400000 - offset).toISOString(); }
 function cookieToken(request: Request) {
   return request.headers.get('cookie')?.split(';').map((item) => item.trim()).find((item) => item.startsWith('rw_session='))?.slice('rw_session='.length) ?? '';
 }
@@ -1280,6 +1282,8 @@ export default {
         await withTransaction(async (client) => {
           const wallet = await client.query('SELECT available_balance FROM wallet_accounts WHERE user_id = $1 FOR UPDATE', [user.id]);
           if (!wallet.rows[0] || amount > Number(wallet.rows[0].available_balance)) throw new BusinessError('Withdrawal amount exceeds available balance.');
+          const todays = await client.query(`SELECT 1 FROM wallet_transactions WHERE user_id = $1 AND type = 'WITHDRAWAL' AND status NOT IN ('REJECTED','FAILED','CANCELLED') AND created_at >= $2 LIMIT 1`, [user.id, rwandaDayStart()]);
+          if (todays.rows.length) throw new BusinessError('You can only request one withdrawal per day. Try again tomorrow.');
           const totals = await client.query(`SELECT
             (SELECT coalesce(sum(commission_amount), 0)::bigint::text FROM commission_ledger WHERE beneficiary_user_id = $1 AND status = 'APPROVED' AND credited_at IS NOT NULL) AS credited,
             (SELECT coalesce(sum(commission_amount), 0)::bigint::text FROM wallet_transactions WHERE user_id = $1 AND type = 'WITHDRAWAL' AND status NOT IN ('REJECTED','FAILED','CANCELLED')) AS allocated`, [user.id]);

@@ -187,6 +187,14 @@ test('central settings award one global welcome bonus and snapshot configured wi
   assert.equal(afterFirst.body.availableBalance, 90000);
   assert.equal(afterFirst.body.reservedBalance, 10000);
 
+  const rejected = await request(`/api/admin/transactions/${first.body.transaction.id}/reject`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'Test rejection' }),
+  }, adminCookie);
+  assert.equal(rejected.response.status, 200);
+  assert.equal(rejected.body.transaction.status, 'REJECTED');
+  assert.equal(rejected.body.transaction.withdrawalFee, 500);
+  assert.equal(rejected.body.transaction.amountReceived, 9500);
+
   const changedSettings = { ...settings, withdrawalFeeValue: 3 };
   assert.equal((await request('/api/admin/platform-settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(changedSettings) }, adminCookie)).response.status, 200);
   const secondPreview = await request('/api/wallet/withdraw/preview', {
@@ -200,14 +208,12 @@ test('central settings award one global welcome bonus and snapshot configured wi
   assert.equal(second.response.status, 201);
   assert.equal(second.body.transaction.withdrawalFee, 300);
   assert.equal(second.body.transaction.amountReceived, 9700);
+  const third = await request('/api/wallet/withdraw', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: 10000 }),
+  }, user.cookie);
+  assert.equal(third.response.status, 400);
+  assert.equal(third.body.error, 'You can only request one withdrawal per day. Try again tomorrow.');
 
-  const rejected = await request(`/api/admin/transactions/${first.body.transaction.id}/reject`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'Test rejection' }),
-  }, adminCookie);
-  assert.equal(rejected.response.status, 200);
-  assert.equal(rejected.body.transaction.status, 'REJECTED');
-  assert.equal(rejected.body.transaction.withdrawalFee, 500);
-  assert.equal(rejected.body.transaction.amountReceived, 9500);
   const approved = await request(`/api/admin/transactions/${second.body.transaction.id}/approve`, { method: 'POST' }, adminCookie);
   assert.equal(approved.body.transaction.status, 'SUCCESS');
   assert.equal(approved.body.transaction.withdrawalFee, 300);
