@@ -82,6 +82,9 @@ export function DepositPage() {
   const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? usdtDepositAmount(numericAmount, customerUnitsPerRwf, Number(selectedMethod.unitsPerUsdt ?? 0), selectedMethod) : convertCurrencyAmount(numericAmount, 1, selectedMethod.receivingUnitsPerRwf ?? customerUnitsPerRwf)) : 0;
   const paymentLabel = isCryptoMethod ? `${paymentAmount.toFixed(2)} USDT` : formatCurrencyAmount(paymentAmount, receivingCurrencyCode);
   const localEquivalent = amountIsValid ? formatCurrencyAmount(convertCurrencyAmount(numericAmount, 1, customerUnitsPerRwf), currencyCode) : '';
+  const methodPaymentAmount = (method: (typeof methods)[number], amountRwf: number) => method.cryptoNetwork === 'TRC20'
+    ? `${usdtDepositAmount(amountRwf, method.customerUnitsPerRwf ?? 1, Number(method.unitsPerUsdt ?? 0), method).toFixed(2)} USDT`
+    : formatCurrencyAmount(convertCurrencyAmount(amountRwf, 1, method.receivingUnitsPerRwf ?? method.customerUnitsPerRwf ?? 1), method.receivingCurrencyCode ?? method.currencyCode);
   const ussdCode = selectedMethod?.ussdTemplate && amountIsValid ? buildUssd(selectedMethod.ussdTemplate, selectedMethod.accountNumber, paymentAmount) : '';
   const copyValue = async (value: string, label: string) => {
     try { await navigator.clipboard.writeText(value); setCopied(label); window.setTimeout(() => setCopied(''), 1600); }
@@ -116,7 +119,7 @@ export function DepositPage() {
     <section className="deposit-method-section" aria-labelledby="deposit-method-title">
       <div className="deposit-section-heading"><Text className="home-kicker" id="deposit-method-title">Payment method</Text></div>
       {methodsLoading ? <Card className="deposit-empty-methods"><Text>Loading payment methods...</Text></Card> : methods.length ? <div className="deposit-method-grid" role="group" aria-label="Available payment methods">{methods.map((method) => <button className={`deposit-method-card${selectedMethodId === method.id ? ' is-selected' : ''}`} type="button" key={method.id} aria-pressed={selectedMethodId === method.id} onClick={() => { setSelectedMethodId(method.id); setDepositError(''); setDepositSuccess(null); }}>
-        <span className="deposit-method-card__logo">{method.logoData ? <img src={method.logoData} alt="" /> : <span aria-hidden="true">{method.name.slice(0, 1).toUpperCase()}</span>}</span><span className="deposit-method-card__copy"><span className="deposit-method-card__name">{method.name}</span><span className="deposit-method-card__range">{formatCurrencyAmount(method.minimumAmount, 'RWF')} – {formatCurrencyAmount(method.maximumAmount, 'RWF')}</span></span><span className="deposit-method-card__check">{selectedMethodId === method.id && <CheckmarkRegular />}</span>
+        <span className="deposit-method-card__logo">{method.logoData ? <img src={method.logoData} alt="" /> : <span aria-hidden="true">{method.name.slice(0, 1).toUpperCase()}</span>}</span><span className="deposit-method-card__copy"><span className="deposit-method-card__name">{method.name}</span><span className="deposit-method-card__range">{methodPaymentAmount(method, method.minimumAmount)} – {methodPaymentAmount(method, method.maximumAmount)}</span></span><span className="deposit-method-card__check">{selectedMethodId === method.id && <CheckmarkRegular />}</span>
       </button>)}</div> : <Card className="deposit-empty-methods"><Text>{depositError || 'No active payment methods are currently available. Please contact support.'}</Text>{depositError && <Button appearance="secondary" onClick={() => void loadMethods()}>Retry</Button>}</Card>}
     </section>
 
