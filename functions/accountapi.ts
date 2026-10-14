@@ -297,7 +297,7 @@ function transactionView(row: Record<string, any>, currency: { countryCode: stri
   };
 }
 
-function publicDepositMethodView(row: Record<string, any>, view: Record<string, any>) { return ['BI', 'UG'].includes(row.country_code) || row.crypto_network === 'TRC20' ? view : { ...view, accountNumber: '' }; }
+function publicDepositMethodView(row: Record<string, any>, view: Record<string, any>) { return ['BI', 'UG'].includes(row.country_code) || row.crypto_network === 'TRC20' || row.ussd_template ? view : { ...view, accountNumber: '' }; }
 
 async function depositMethodView(row: Record<string, any>, currency: { currencyCode: string; unitsPerRwf: number; unitsPerUsdt?: number } | null = null) {
   const countryCode = row.country_code ?? 'RW';

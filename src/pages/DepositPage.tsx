@@ -92,7 +92,7 @@ export function DepositPage() {
   const selectedMethod = methods.find((method) => method.id === selectedMethodId) ?? null;
   const currencyCode = selectedMethod?.currencyCode ?? methods[0]?.currencyCode ?? 'RWF';
   const countryCode = selectedMethod?.countryCode ?? methods[0]?.countryCode ?? 'RW';
-  const showMerchantDetails = countryCode === 'BI' || countryCode === 'UG';
+  const showMerchantDetails = countryCode === 'RW' || countryCode === 'BI' || countryCode === 'UG';
   const phonePlaceholder = countryCode === 'BI' ? '06xxxxxxx' : countryCode === 'UG' ? '077xxxxxxx' : '078xxxxxxx';
   const receivingCurrencyCode = selectedMethod?.receivingCurrencyCode ?? currencyCode;
   const isCryptoMethod = selectedMethod?.cryptoNetwork === 'TRC20';
