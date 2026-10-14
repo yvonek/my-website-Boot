@@ -42,6 +42,11 @@ function usdtWithFee(usdt: number, feePercent: number, direction: 'deposit' | 'w
   const factor = direction === 'deposit' ? 1 + feePercent / 100 : 1 - feePercent / 100;
   return Math.max(0, Math.round(usdt * factor * 100) / 100);
 }
+// Deposit-only USDT fee: FIXED is entered in RWF and added to the RWF amount before conversion; PERCENTAGE adds a percent of USDT.
+function usdtDepositAmount(amountRwf: number, unitsPerRwf: number, unitsPerUsdt: number, settings: { usdtDepositFeeType: string; usdtDepositFeeValue: number }) {
+  if (settings.usdtDepositFeeType === 'FIXED') return usdtAmount(amountRwf + settings.usdtDepositFeeValue, unitsPerRwf, unitsPerUsdt);
+  return usdtWithFee(usdtAmount(amountRwf, unitsPerRwf, unitsPerUsdt), settings.usdtDepositFeeValue, 'deposit');
+}
 const cryptoMethod = 'USDT_TRC20';
 const cryptoNetworkTrc20 = 'TRC20';
 const trc20AddressPattern = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
@@ -292,6 +297,8 @@ function transactionView(row: Record<string, any>, currency: { countryCode: stri
   };
 }
 
+function publicDepositMethodView(row: Record<string, any>, view: Record<string, any>) { return ['BI', 'UG'].includes(row.country_code) || row.crypto_network === 'TRC20' ? view : { ...view, accountNumber: '' }; }
+
 async function depositMethodView(row: Record<string, any>, currency: { currencyCode: string; unitsPerRwf: number; unitsPerUsdt?: number } | null = null) {
   const countryCode = row.country_code ?? 'RW';
   const receivingCountryCode = row.receiving_country_code ?? countryCode;
@@ -299,9 +306,10 @@ async function depositMethodView(row: Record<string, any>, currency: { currencyC
   const currencyCode = currency?.currencyCode ?? 'RWF';
   const minimum = Number(row.minimum_amount ?? 0);
   const maximum = Number(row.maximum_amount ?? 0);
+  const feeSettings = await platformSettings();
   return {
     id: row.code, name: row.name, accountName: row.account_name, accountNumber: row.account_number, instructions: row.instructions, ussdTemplate: row.ussd_template ?? '',
-    minimumAmount: currency ? localAmount(minimum, currency.unitsPerRwf) : minimum, maximumAmount: currency ? localAmount(maximum, currency.unitsPerRwf) : maximum,
+    minimumAmount: minimum, maximumAmount: maximum, usdtDepositFeeType: feeSettings.usdtDepositFeeType, usdtDepositFeeValue: feeSettings.usdtDepositFeeValue,
     countryCode, currencyCode, customerUnitsPerRwf: Number(currency?.unitsPerRwf ?? 1), crossBorderEnabled: Boolean(row.cross_border_enabled), receivingCountryCode,
     cryptoNetwork: row.crypto_network ?? '', unitsPerUsdt: Number(currency?.unitsPerUsdt ?? 0),
     receivingCurrencyCode: receivingCurrency?.currencyCode ?? currencyCode, receivingUnitsPerRwf: Number(receivingCurrency?.unitsPerRwf ?? currency?.unitsPerRwf ?? 1),
@@ -310,7 +318,7 @@ async function depositMethodView(row: Record<string, any>, currency: { currencyC
 }
 
 async function platformSettings() {
-  const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('withdrawal_fee_enabled','withdrawal_fee_type','withdrawal_fee_value','welcome_bonus_enabled','welcome_bonus_amount','minimum_withdrawal_amount','usdt_fee_percent')");
+  const result = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('withdrawal_fee_enabled','withdrawal_fee_type','withdrawal_fee_value','welcome_bonus_enabled','welcome_bonus_amount','minimum_withdrawal_amount','usdt_fee_percent','usdt_deposit_fee_type','usdt_deposit_fee_value')");
   const read = Object.fromEntries(result.rows.map((row) => [row.key, row.value])) as Record<string, string | undefined>;
   const withdrawalFeeType = read.withdrawal_fee_type === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
   return {
@@ -318,6 +326,8 @@ async function platformSettings() {
     withdrawalFeeValue: Number(read.withdrawal_fee_value ?? 0), welcomeBonusEnabled: read.welcome_bonus_enabled === '1', welcomeBonusAmount: Number(read.welcome_bonus_amount ?? 0),
     minimumWithdrawal: Number(read.minimum_withdrawal_amount ?? 0),
     usdtFeePercent: Number(read.usdt_fee_percent ?? 0),
+    usdtDepositFeeType: read.usdt_deposit_fee_type === 'FIXED' ? 'FIXED' : 'PERCENTAGE',
+    usdtDepositFeeValue: read.usdt_deposit_fee_value === undefined ? Number(read.usdt_fee_percent ?? 0) : Number(read.usdt_deposit_fee_value),
   };
 }
 
@@ -1089,12 +1099,19 @@ export default {
         if (!Number.isSafeInteger(minimumWithdrawal) || minimumWithdrawal < 0) return json({ error: 'Enter a valid minimum withdrawal amount.' }, 400);
         const usdtFeePercent = Number(input.usdtFeePercent);
         if (!Number.isFinite(usdtFeePercent) || usdtFeePercent < 0 || usdtFeePercent >= 100) return json({ error: 'Enter a valid USDT fee percentage (0 to 99.99).' }, 400);
+        const usdtDepositFeeType = input.usdtDepositFeeType === undefined ? 'PERCENTAGE' : String(input.usdtDepositFeeType);
+        const usdtDepositFeeValue = input.usdtDepositFeeValue === undefined ? usdtFeePercent : Number(input.usdtDepositFeeValue);
+        const validDepositFee = Number.isFinite(usdtDepositFeeValue) && usdtDepositFeeValue >= 0 && (usdtDepositFeeType === 'PERCENTAGE' ? usdtDepositFeeValue < 100 : usdtDepositFeeType === 'FIXED' && Number.isInteger(usdtDepositFeeValue) && usdtDepositFeeValue <= 100000);
+        if (!['PERCENTAGE', 'FIXED'].includes(usdtDepositFeeType) || !validDepositFee) return json({ error: 'Enter a valid USDT deposit fee type and value.' }, 400);
         if (typeof input.withdrawalFeeEnabled !== 'boolean' || !['PERCENTAGE', 'FIXED'].includes(String(feeType)) || !Number.isFinite(feeValue) || feeValue < 0 || (feeType === 'PERCENTAGE' && feeValue > 100) || (feeType === 'FIXED' && !Number.isSafeInteger(feeValue))) return json({ error: 'Enter a valid withdrawal fee type and value.' }, 400);
         if (typeof input.welcomeBonusEnabled !== 'boolean' || !Number.isSafeInteger(welcomeAmount) || welcomeAmount < 0) return json({ error: 'Enter a valid welcome bonus amount.' }, 400);
-        const values = { withdrawal_fee_enabled: input.withdrawalFeeEnabled ? '1' : '0', withdrawal_fee_type: String(feeType), withdrawal_fee_value: String(feeValue), welcome_bonus_enabled: input.welcomeBonusEnabled ? '1' : '0', welcome_bonus_amount: String(welcomeAmount), minimum_withdrawal_amount: String(minimumWithdrawal), usdt_fee_percent: String(usdtFeePercent) };
+        const values = { withdrawal_fee_enabled: input.withdrawalFeeEnabled ? '1' : '0', withdrawal_fee_type: String(feeType), withdrawal_fee_value: String(feeValue), welcome_bonus_enabled: input.welcomeBonusEnabled ? '1' : '0', welcome_bonus_amount: String(welcomeAmount), minimum_withdrawal_amount: String(minimumWithdrawal), usdt_fee_percent: String(usdtFeePercent), usdt_deposit_fee_type: usdtDepositFeeType, usdt_deposit_fee_value: String(usdtDepositFeeValue) };
         for (const [key, value] of Object.entries(values)) {
           await pool.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', [key, value, now()]);
         }
+        // Apply the saved amount to every welcome bonus that is still locked (awarded, not yet unlocked).
+        // Disabling the bonus cancels locked amounts. Unlocked bonuses are never changed.
+        await pool.query('UPDATE users SET welcome_bonus_amount = $1 WHERE welcome_bonus_awarded_at IS NOT NULL AND welcome_bonus_unlocked_at IS NULL AND welcome_bonus_amount > 0', [input.welcomeBonusEnabled ? welcomeAmount : 0]);
         return json(await platformSettings());
       }
 
@@ -1108,8 +1125,7 @@ export default {
       if ((path === '/api/deposit-methods' || path === '/api/wallet/deposit/methods') && method === 'GET') {
         const currency = await currencyForUser(user.id);
         const rows = await pool.query(`SELECT d.* FROM deposit_methods d WHERE d.country_code = $1 AND ${depositMethodFilter} ORDER BY d.position, d.name`, [currency.countryCode]);
-        const { usdtFeePercent } = await platformSettings();
-        return json({ methods: await Promise.all(rows.rows.map(async (row) => ({ ...(await depositMethodView(row, currency)), usdtFeePercent }))), currencyCode: currency.currencyCode });
+        return json({ methods: await Promise.all(rows.rows.map(async (row) => publicDepositMethodView(row, await depositMethodView(row, currency)))), currencyCode: currency.currencyCode });
       }
 
       if (path === '/api/wallet/withdraw/methods' && method === 'GET') {
@@ -1205,25 +1221,24 @@ export default {
         if (method !== 'POST') return json({ error: 'Not found' }, 404);
         const blocked = featureGuard('deposit'); if (blocked) return blocked;
         const input = await readBody(request);
-        const displayAmount = positiveInteger(input.amount);
-        const amount = displayAmount ? convertLocalToRwf(displayAmount, user.unitsPerRwf) : null;
+        const amount = positiveInteger(input.amount);
         const phoneNumber = String(input.phoneNumber ?? '').replace(/[\s-]/g, '');
         const senderName = String(input.senderName ?? '').trim().slice(0, 120);
         const depositMethodId = String(input.depositMethodId ?? '').trim();
         const screenshotData = input.screenshotData;
         const methodResult = depositMethodId ? await pool.query('SELECT * FROM deposit_methods WHERE code = $1 AND country_code = $2 AND enabled::int = 1', [depositMethodId, user.countryCode]) : { rows: [] as Record<string, any>[] };
         const depositMethod = methodResult.rows[0];
-        if (!amount || !displayAmount || !normalizePhone(phoneNumber, user.countryCode) || !senderName || !depositMethod || !String(depositMethod.account_name ?? '').trim() || !String(depositMethod.account_number ?? '').trim() || !imageDataValid(screenshotData, 4 * 1024 * 1024)) {
+        if (!amount || !normalizePhone(phoneNumber, user.countryCode) || !senderName || !depositMethod || !String(depositMethod.account_name ?? '').trim() || !String(depositMethod.account_number ?? '').trim() || !imageDataValid(screenshotData, 4 * 1024 * 1024)) {
           return json({ error: 'Choose an active payment method for your country, enter a valid amount, phone number and payer name, and attach a PNG, JPEG, or WebP payment screenshot (max 4 MB).' }, 400);
         }
         const minimum = Number(depositMethod.minimum_amount);
         const maximum = Number(depositMethod.maximum_amount);
-        if (amount < minimum || amount > maximum) return json({ error: `Amount must be between ${localAmount(minimum, user.unitsPerRwf).toLocaleString()} and ${localAmount(maximum, user.unitsPerRwf).toLocaleString()} ${user.currencyCode} for ${depositMethod.name}.` }, 400);
+        if (amount < minimum || amount > maximum) return json({ error: `Amount must be between ${minimum.toLocaleString()} and ${maximum.toLocaleString()} RWF for ${depositMethod.name}.` }, 400);
         const isCrypto = depositMethod.crypto_network === cryptoNetworkTrc20;
         const receiving = isCrypto ? { countryCode: user.countryCode, currencyCode: 'USDT' } : await countrySettings(depositMethod.receiving_country_code ?? user.countryCode);
         const receivingRate = isCrypto ? Number(user.unitsPerUsdt) : Number(receiving?.unitsPerRwf);
-        const usdtFeePercent = isCrypto ? (await platformSettings()).usdtFeePercent : 0;
-        const paymentAmount = receiving && receivingRate > 0 ? (isCrypto ? usdtWithFee(usdtAmount(amount, user.unitsPerRwf, receivingRate), usdtFeePercent, 'deposit') : localAmount(amount, receivingRate)) : 0;
+        const feeSettings = await platformSettings();
+        const paymentAmount = receiving && receivingRate > 0 ? (isCrypto ? usdtDepositAmount(amount, user.unitsPerRwf, receivingRate, feeSettings) : localAmount(amount, receivingRate)) : 0;
         if (!receiving || receivingRate <= 0 || paymentAmount <= 0) return json({ error: 'The receiving payment account does not have a valid exchange rate.' }, 400);
         const id = randomUUID();
         const timestamp = now();

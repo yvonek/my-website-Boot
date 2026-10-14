@@ -84,12 +84,17 @@ test('central settings award one global welcome bonus and snapshot configured wi
     withdrawalFeeValue: 5,
     welcomeBonusEnabled: true,
     welcomeBonusAmount: 5000,
+    usdtFeePercent: 0,
+    usdtDepositFeeType: 'PERCENTAGE',
+    usdtDepositFeeValue: 0,
   };
   const saved = await request('/api/admin/platform-settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings) }, adminCookie);
   assert.equal(saved.response.status, 200);
   assert.deepEqual(saved.body, { ...settings, minimumWithdrawal: 0 });
   const invalid = await request('/api/admin/platform-settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...settings, withdrawalFeeValue: 101 }) }, adminCookie);
   assert.equal(invalid.response.status, 400);
+  const invalidDepositFee = await request('/api/admin/platform-settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...settings, usdtDepositFeeType: 'PERCENTAGE', usdtDepositFeeValue: 100 }) }, adminCookie);
+  assert.equal(invalidDepositFee.response.status, 400);
 
   const productInput = {
     name: 'Starter CCTV', description: 'Platform settings integration product.', imageData: productImage,
@@ -228,7 +233,7 @@ test('central settings award one global welcome bonus and snapshot configured wi
 
 test('confirmed product purchase credits referral levels once and idempotent retries do not charge twice', async () => {
   const adminHeaders = { 'content-type': 'application/json' };
-  const feeDisabled = { withdrawalFeeEnabled: false, withdrawalFeeType: 'PERCENTAGE', withdrawalFeeValue: 5, welcomeBonusEnabled: true, welcomeBonusAmount: 5000 };
+  const feeDisabled = { withdrawalFeeEnabled: false, withdrawalFeeType: 'PERCENTAGE', withdrawalFeeValue: 5, welcomeBonusEnabled: true, welcomeBonusAmount: 5000, usdtFeePercent: 0 };
   assert.equal((await request('/api/admin/platform-settings', { method: 'PUT', headers: adminHeaders, body: JSON.stringify(feeDisabled) }, adminCookie)).response.status, 200);
   for (const [level, percentage] of [[1, 5], [2, 2], [3, 1]]) {
     const saved = await request('/api/admin/referral-settings', { method: 'POST', headers: adminHeaders, body: JSON.stringify({ level, percentage }) }, adminCookie);
@@ -298,4 +303,26 @@ test('confirmed product purchase credits referral levels once and idempotent ret
     assert.equal(rejectedWithdrawal.response.status, 200);
     const afterReject = await request('/api/team', {}, direct.cookie);
     assert.equal(afterReject.body.availableCommission, 500);
+});
+
+test('admin welcome bonus changes apply to locked bonuses of existing users only', async () => {
+  const adminHeaders = { 'content-type': 'application/json' };
+  const saveBonus = (welcomeBonusEnabled, welcomeBonusAmount) => request('/api/admin/platform-settings', {
+    method: 'PUT', headers: adminHeaders,
+    body: JSON.stringify({ withdrawalFeeEnabled: false, withdrawalFeeType: 'PERCENTAGE', withdrawalFeeValue: 5, welcomeBonusEnabled, welcomeBonusAmount, usdtFeePercent: 0 }),
+  }, adminCookie);
+
+  assert.equal((await saveBonus(true, 5000)).response.status, 200);
+  const existing = await register('Existing Locked User', '0781234008');
+  assert.equal(existing.body.user.welcomeBonusAmount, 5000);
+  assert.equal((await request('/api/wallet/balance', {}, existing.cookie)).body.lockedWelcomeBonus, 5000);
+
+  assert.equal((await saveBonus(true, 8000)).response.status, 200);
+  assert.equal((await request('/api/wallet/balance', {}, existing.cookie)).body.lockedWelcomeBonus, 8000);
+
+  assert.equal((await saveBonus(false, 8000)).response.status, 200);
+  assert.equal((await request('/api/wallet/balance', {}, existing.cookie)).body.lockedWelcomeBonus, 0);
+
+  assert.equal((await saveBonus(true, 9000)).response.status, 200);
+  assert.equal((await request('/api/wallet/balance', {}, existing.cookie)).body.lockedWelcomeBonus, 0);
 });

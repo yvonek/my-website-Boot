@@ -234,16 +234,16 @@ describe('Telegram group invitation', () => {
     const view = render(<App />);
 
     expect(await screen.findByRole('dialog', { name: 'Join our Telegram group' })).toBeInTheDocument();
-    expect(screen.getByText('Short community updates. Bonus: 45,000 UGX.')).toBeInTheDocument();
+    expect(screen.getByText('Short community updates. Bonus: 20,175 UGX.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
     expect(screen.queryByRole('dialog', { name: 'Join our Telegram group' })).not.toBeInTheDocument();
-    expect(sessionStorage.getItem(`telegram-invite-dismissed:telegram-user:${JSON.stringify(['https://t.me/example_group', 'Short community updates. Bonus: 45,000 UGX.'])}`)).toBe('1');
+    expect(sessionStorage.getItem(`telegram-invite-dismissed:telegram-user:${JSON.stringify(['https://t.me/example_group', 'Short community updates. Bonus: 20,175 UGX.'])}`)).toBe('1');
 
     popupMessage = 'New top-up information.';
     popupCountryCode = 'BI';
     view.unmount();
     render(<App />);
-    expect(await screen.findByText('New top-up information. Bonus: 43,500 BIF.')).toBeInTheDocument();
+    expect(await screen.findByText('New top-up information. Bonus: 20,175 BIF.')).toBeInTheDocument();
   });
 });
 

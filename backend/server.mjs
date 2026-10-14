@@ -33,6 +33,8 @@ function baseAmount(amountLocal, currency) { return convertLocalToRwf(amountLoca
 function usdtAmount(amountRwf, currency) { return Math.round((localAmount(amountRwf, currency) / currency.unitsPerUsdt) * 100) / 100; }
 // Admin USDT fee: deposits pay more USDT, withdrawals send less USDT.
 function usdtWithFee(usdt, feePercent, direction) { const factor = direction === 'deposit' ? 1 + feePercent / 100 : 1 - feePercent / 100; return Math.max(0, Math.round(usdt * factor * 100) / 100); }
+// Deposit-only USDT fee: FIXED is entered in RWF and added to the RWF amount before conversion; PERCENTAGE adds a percent of USDT.
+function usdtDepositAmount(amountRwf, currency, settings) { if (settings.usdtDepositFeeType === 'FIXED') return usdtAmount(amountRwf + settings.usdtDepositFeeValue, currency); return usdtWithFee(usdtAmount(amountRwf, currency), settings.usdtDepositFeeValue, 'deposit'); }
 function validTronAddress(address) { return trc20AddressPattern.test(String(address ?? '').trim()); }
 function hasCompletedProductPurchase(userId) { return Boolean(database.prepare("SELECT 1 FROM product_purchases WHERE user_id = ? AND status = 'COMPLETED' LIMIT 1").get(userId)); }
 function walletBalanceView(userId) {
@@ -155,6 +157,8 @@ function platformSettings() {
     welcomeBonusAmount: Number(read('welcome_bonus_amount') ?? 0),
     minimumWithdrawal: Number(read('minimum_withdrawal_amount') ?? 0),
     usdtFeePercent: Number(read('usdt_fee_percent') ?? 0),
+    usdtDepositFeeType: read('usdt_deposit_fee_type') === 'FIXED' ? 'FIXED' : 'PERCENTAGE',
+    usdtDepositFeeValue: read('usdt_deposit_fee_value') === undefined ? Number(read('usdt_fee_percent') ?? 0) : Number(read('usdt_deposit_fee_value')),
   };
 }
 function referralChain(userId) { const chain = []; let current = userId; for (let level = 1; level <= 3; level += 1) { const row = database.prepare('SELECT sponsor_user_id AS sponsorUserId FROM referral_relationships WHERE user_id = ?').get(current); if (!row) break; chain.push({ level, userId: row.sponsorUserId }); current = row.sponsorUserId; } return chain; }
@@ -200,7 +204,8 @@ function withdrawalAccountFor(userId) { return database.prepare('SELECT account_
 function withdrawalDetailsValid(account, currency) { return account.paymentMethod === cryptoMethod ? validTronAddress(account.walletAddress) && Number(currency.unitsPerUsdt) > 0 : validPhone(account.phoneNumber, currency.countryCode); }
 function boundWithdrawalFields(input, userId, currency = currencyForUser(userId)) { const displayAmount = amountOf(input.amount); const amount = displayAmount ? baseAmount(displayAmount, currency) : null; const account = withdrawalAccountFor(userId); return { amount, displayAmount, account, valid: Boolean(amount && account && withdrawalDetailsValid(account, currency) && validMethod(account.paymentMethod)) }; }
 function imageDataValid(value, maxBytes) { if (typeof value !== 'string') return false; const match = value.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/); if (!match) return false; return Buffer.from(match[2], 'base64').byteLength <= maxBytes; }
-function depositMethodView(row, currency = null) { const countryCode = row.country_code ?? 'RW'; const receivingCountryCode = row.receiving_country_code ?? countryCode; const receivingCurrency = countrySettingsForCode(receivingCountryCode); const currencyCode = currency?.currencyCode ?? 'RWF'; return { id: row.code, name: row.name, accountName: row.account_name, accountNumber: row.account_number, instructions: row.instructions, ussdTemplate: row.ussd_template ?? '', minimumAmount: currency ? localAmount(row.minimum_amount, currency) : row.minimum_amount, maximumAmount: currency ? localAmount(row.maximum_amount, currency) : row.maximum_amount, countryCode, currencyCode, customerUnitsPerRwf: Number(currency?.unitsPerRwf ?? 1), cryptoNetwork: row.crypto_network ?? '', unitsPerUsdt: Number(currency?.unitsPerUsdt ?? 0), usdtFeePercent: platformSettings().usdtFeePercent, crossBorderEnabled: Boolean(row.cross_border_enabled), receivingCountryCode, receivingCurrencyCode: receivingCurrency?.currencyCode ?? currencyCode, receivingUnitsPerRwf: Number(receivingCurrency?.unitsPerRwf ?? currency?.unitsPerRwf ?? 1), logoData: row.logo_data, enabled: Boolean(row.enabled), position: row.position }; }
+function depositMethodView(row, currency = null) { const countryCode = row.country_code ?? 'RW'; const receivingCountryCode = row.receiving_country_code ?? countryCode; const receivingCurrency = countrySettingsForCode(receivingCountryCode); const currencyCode = currency?.currencyCode ?? 'RWF'; return { id: row.code, name: row.name, accountName: row.account_name, accountNumber: row.account_number, instructions: row.instructions, ussdTemplate: row.ussd_template ?? '', minimumAmount: row.minimum_amount, maximumAmount: row.maximum_amount, countryCode, currencyCode, customerUnitsPerRwf: Number(currency?.unitsPerRwf ?? 1), cryptoNetwork: row.crypto_network ?? '', unitsPerUsdt: Number(currency?.unitsPerUsdt ?? 0), usdtDepositFeeType: platformSettings().usdtDepositFeeType, usdtDepositFeeValue: platformSettings().usdtDepositFeeValue, crossBorderEnabled: Boolean(row.cross_border_enabled), receivingCountryCode, receivingCurrencyCode: receivingCurrency?.currencyCode ?? currencyCode, receivingUnitsPerRwf: Number(receivingCurrency?.unitsPerRwf ?? currency?.unitsPerRwf ?? 1), logoData: row.logo_data, enabled: Boolean(row.enabled), position: row.position }; }
+function publicDepositMethodView(row, view) { return ['BI', 'UG'].includes(row.country_code) || row.crypto_network === 'TRC20' ? view : { ...view, accountNumber: '' }; }
 function parseDepositMethod(input) {
   const name = String(input.name ?? '').trim().slice(0, 80);
   const accountName = String(input.accountName ?? '').trim().slice(0, 120);
@@ -947,7 +952,7 @@ async function handle(request, response) {
   if (path === '/api/deposit-methods' && method === 'GET') {
     const currency = currencyForUser(user.id);
     const rows = database.prepare("SELECT * FROM deposit_methods WHERE country_code = ? AND enabled = 1 AND trim(account_name) <> '' AND trim(account_number) <> '' ORDER BY position, name").all(currency.countryCode);
-    sendJson(response, 200, { methods: rows.map((row) => depositMethodView(row, currency)), currencyCode: currency.currencyCode }); return;
+    sendJson(response, 200, { methods: rows.map((row) => publicDepositMethodView(row, depositMethodView(row, currency))), currencyCode: currency.currencyCode }); return;
   }
   if (path === '/api/dashboard' && method === 'GET') { const currency = currencyForUser(user.id); const metrics = user.permissions.dashboard ? database.prepare('SELECT label, value, detail, tone FROM dashboard_metrics ORDER BY position, label').all() : []; const plans = user.permissions.products && currency.enabled ? database.prepare("SELECT * FROM plans WHERE total_slots > 0 AND status = 'Active' ORDER BY position, name").all().map((plan) => localizedPlanView(plan, currency)) : []; const referrals = user.permissions.myTeam ? database.prepare('SELECT person, joined, contribution, commission, status FROM referrals ORDER BY position, person').all() : []; const tools = user.permissions.support ? database.prepare('SELECT name, value, state FROM support_tools ORDER BY position, name').all() : []; sendJson(response, 200, { metrics, plans, referrals, tools, countryCode: currency.countryCode, currencyCode: currency.currencyCode, exchangeRate: currency.unitsPerRwf }); return; }
     if (path === '/api/admin/platform-settings' && method === 'GET') {
@@ -964,6 +969,10 @@ async function handle(request, response) {
       if (!Number.isSafeInteger(minimumWithdrawal) || minimumWithdrawal < 0) { sendJson(response, 400, { error: 'Enter a valid minimum withdrawal amount.' }); return; }
       const usdtFeePercent = Number(input.usdtFeePercent);
       if (!Number.isFinite(usdtFeePercent) || usdtFeePercent < 0 || usdtFeePercent >= 100) { sendJson(response, 400, { error: 'Enter a valid USDT fee percentage (0 to 99.99).' }); return; }
+      const usdtDepositFeeType = input.usdtDepositFeeType === undefined ? 'PERCENTAGE' : input.usdtDepositFeeType;
+      const usdtDepositFeeValue = input.usdtDepositFeeValue === undefined ? usdtFeePercent : Number(input.usdtDepositFeeValue);
+      const validDepositFee = Number.isFinite(usdtDepositFeeValue) && usdtDepositFeeValue >= 0 && (usdtDepositFeeType === 'PERCENTAGE' ? usdtDepositFeeValue < 100 : usdtDepositFeeType === 'FIXED' && Number.isInteger(usdtDepositFeeValue) && usdtDepositFeeValue <= 100000);
+      if (!['PERCENTAGE', 'FIXED'].includes(usdtDepositFeeType) || !validDepositFee) { sendJson(response, 400, { error: 'Enter a valid USDT deposit fee type and value.' }); return; }
       if (typeof input.withdrawalFeeEnabled !== 'boolean' || !['PERCENTAGE', 'FIXED'].includes(feeType) || !Number.isFinite(feeValue) || feeValue < 0 || (feeType === 'PERCENTAGE' && feeValue > 100) || (feeType === 'FIXED' && !Number.isSafeInteger(feeValue))) { sendJson(response, 400, { error: 'Enter a valid withdrawal fee type and value.' }); return; }
       if (typeof input.welcomeBonusEnabled !== 'boolean' || !Number.isSafeInteger(welcomeAmount) || welcomeAmount < 0) { sendJson(response, 400, { error: 'Enter a valid welcome bonus amount.' }); return; }
       const values = {
@@ -974,11 +983,16 @@ async function handle(request, response) {
         welcome_bonus_amount: String(welcomeAmount),
         minimum_withdrawal_amount: String(minimumWithdrawal),
         usdt_fee_percent: String(usdtFeePercent),
+        usdt_deposit_fee_type: usdtDepositFeeType,
+        usdt_deposit_fee_value: String(usdtDepositFeeValue),
       };
       const saveSetting = database.prepare('INSERT INTO support_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at');
       database.exec('BEGIN IMMEDIATE');
       try {
         for (const [key, value] of Object.entries(values)) saveSetting.run(key, value, now());
+        // Apply the saved amount to every welcome bonus that is still locked (awarded, not yet unlocked).
+        // Disabling the bonus cancels locked amounts. Unlocked bonuses are never changed.
+        database.prepare('UPDATE users SET welcome_bonus_amount = ? WHERE welcome_bonus_awarded_at IS NOT NULL AND welcome_bonus_unlocked_at IS NULL AND welcome_bonus_amount > 0').run(input.welcomeBonusEnabled ? welcomeAmount : 0);
         database.exec('COMMIT');
       } catch (error) { database.exec('ROLLBACK'); throw error; }
       sendJson(response, 200, platformSettings()); return;
@@ -1089,28 +1103,25 @@ async function handle(request, response) {
   if (adminConversationMessages && method === 'GET') { if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; } const conversation = database.prepare('SELECT id FROM support_conversations WHERE id = ?').get(adminConversationMessages[1]); if (!conversation) { sendJson(response, 404, { error: 'Conversation not found.' }); return; } const messages = database.prepare('SELECT id, author_id AS authorId, body, created_at AS createdAt FROM support_messages WHERE conversation_id = ? ORDER BY created_at').all(conversation.id); sendJson(response, 200, { messages }); return; }
   if (adminConversationMessages && method === 'POST') { if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; } const conversation = database.prepare('SELECT id FROM support_conversations WHERE id = ?').get(adminConversationMessages[1]); const input = await readBody(request); const body = String(input.body ?? '').trim(); if (!conversation || !body) { sendJson(response, 400, { error: 'Conversation and message are required.' }); return; } const id = randomUUID(); const authorId = currentUser(request)?.id ?? 'ADMIN'; database.prepare('INSERT INTO support_messages (id, conversation_id, author_id, body) VALUES (?, ?, ?, ?)').run(id, conversation.id, authorId, body.slice(0, 2000)); database.prepare('UPDATE support_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(conversation.id); const message = database.prepare('SELECT id, author_id AS authorId, body, created_at AS createdAt FROM support_messages WHERE id = ?').get(id); sendJson(response, 201, { message }); return; }
   if (path === '/api/admin/purchases' && method === 'GET') { if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; } sendJson(response, 200, { purchases: database.prepare('SELECT * FROM product_purchases ORDER BY created_at DESC').all(), commissions: database.prepare('SELECT * FROM commission_ledger ORDER BY created_at DESC').all() }); return; }
-  if (path === '/api/wallet/deposit/methods' && method === 'GET') { const currency = currencyForUser(user.id); const rows = database.prepare("SELECT * FROM deposit_methods WHERE country_code = ? AND enabled = 1 AND trim(account_name) <> '' AND trim(account_number) <> '' ORDER BY position, name").all(user.countryCode); sendJson(response, 200, { methods: rows.map((row) => depositMethodView(row, currency)), currencyCode: currency.currencyCode }); return; }
+  if (path === '/api/wallet/deposit/methods' && method === 'GET') { const currency = currencyForUser(user.id); const rows = database.prepare("SELECT * FROM deposit_methods WHERE country_code = ? AND enabled = 1 AND trim(account_name) <> '' AND trim(account_number) <> '' ORDER BY position, name").all(user.countryCode); sendJson(response, 200, { methods: rows.map((row) => publicDepositMethodView(row, depositMethodView(row, currency))), currencyCode: currency.currencyCode }); return; }
   if (path === '/api/wallet/withdraw/methods' && method === 'GET') { sendJson(response, 200, { methods: database.prepare('SELECT m.code, m.name FROM withdrawal_methods m JOIN country_withdrawal_methods c ON c.method_code = m.code WHERE m.enabled = 1 AND c.enabled = 1 AND c.country_code = ? ORDER BY m.name').all(user.countryCode) }); return; }
   if (path === '/api/wallet/deposit' && method === 'POST') {
     const input = await readBody(request);
     const currency = currencyForUser(user.id);
-    const displayAmount = amountOf(input.amount);
-    const amount = displayAmount ? baseAmount(displayAmount, currency) : null;
+    const amount = amountOf(input.amount);
     const phoneNumber = String(input.phoneNumber ?? '').replace(/[\s-]/g, '');
     const senderName = String(input.senderName ?? '').trim().slice(0, 120);
     const depositMethodId = String(input.depositMethodId ?? '').trim();
     const screenshotData = input.screenshotData;
     const depositMethod = depositMethodId ? database.prepare('SELECT * FROM deposit_methods WHERE code = ? AND country_code = ? AND enabled = 1').get(depositMethodId, user.countryCode) : null;
-    if (!amount || !displayAmount || !validPhone(phoneNumber, user.countryCode) || !senderName || !depositMethod || !depositMethod.account_name.trim() || !depositMethod.account_number.trim() || !imageDataValid(screenshotData, maxScreenshotBytes)) {
+    if (!amount || !validPhone(phoneNumber, user.countryCode) || !senderName || !depositMethod || !depositMethod.account_name.trim() || !depositMethod.account_number.trim() || !imageDataValid(screenshotData, maxScreenshotBytes)) {
       sendJson(response, 400, { error: 'Choose an active payment method for your country, enter a valid amount, phone number and payer name, and attach a PNG, JPEG, or WebP payment screenshot (max 4 MB).' }); return;
     }
-    const minimumDisplayAmount = localAmount(depositMethod.minimum_amount, currency);
-    const maximumDisplayAmount = localAmount(depositMethod.maximum_amount, currency);
-    if (amount < depositMethod.minimum_amount || amount > depositMethod.maximum_amount) { sendJson(response, 400, { error: `Amount must be between ${minimumDisplayAmount.toLocaleString()} and ${maximumDisplayAmount.toLocaleString()} ${currency.currencyCode} for ${depositMethod.name}.` }); return; }
+    if (amount < depositMethod.minimum_amount || amount > depositMethod.maximum_amount) { sendJson(response, 400, { error: `Amount must be between ${depositMethod.minimum_amount.toLocaleString()} and ${depositMethod.maximum_amount.toLocaleString()} RWF for ${depositMethod.name}.` }); return; }
     const isCrypto = depositMethod.crypto_network === cryptoNetworkTrc20;
     const receivingCurrency = isCrypto ? { countryCode: currency.countryCode, currencyCode: 'USDT' } : countrySettingsForCode(depositMethod.receiving_country_code ?? currency.countryCode);
     const receivingRate = isCrypto ? Number(currency.unitsPerUsdt) : Number(receivingCurrency?.unitsPerRwf);
-    const depositPaymentAmount = isCrypto ? (receivingRate > 0 ? usdtWithFee(usdtAmount(amount, currency), platformSettings().usdtFeePercent, 'deposit') : 0) : receivingCurrency && receivingRate > 0 ? localAmount(amount, { unitsPerRwf: receivingRate }) : 0;
+    const depositPaymentAmount = isCrypto ? (receivingRate > 0 ? usdtDepositAmount(amount, currency, platformSettings()) : 0) : receivingCurrency && receivingRate > 0 ? localAmount(amount, { unitsPerRwf: receivingRate }) : 0;
     if (!receivingCurrency || receivingRate <= 0 || depositPaymentAmount <= 0) { sendJson(response, 400, { error: 'The receiving payment account does not have a valid exchange rate.' }); return; }
     const id = randomUUID(); const reference = `DEP-${randomUUID()}`;
     database.prepare('INSERT INTO wallet_transactions (id, user_id, type, amount, sender_name, receiver_name, phone_number, payment_method, deposit_method_id, deposit_method_name, screenshot_data, status, provider, internal_reference, deposit_receiving_country_code, deposit_receiving_currency_code, deposit_receiving_exchange_rate, deposit_payment_amount, crypto_network, crypto_amount, crypto_units_per_usdt, crypto_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, demoUserId, 'DEPOSIT', amount, senderName, '', phoneNumber, depositMethod.name, depositMethod.code, depositMethod.name, screenshotData, 'PENDING', 'ADMIN_REVIEW', reference, receivingCurrency.countryCode, receivingCurrency.currencyCode, receivingRate, depositPaymentAmount, isCrypto ? cryptoNetworkTrc20 : '', isCrypto ? depositPaymentAmount : null, isCrypto ? currency.unitsPerUsdt : null, isCrypto ? depositMethod.account_number : null);

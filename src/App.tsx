@@ -46,7 +46,7 @@ function localizeAmounts(message: string, currencyCode: string, rate: number, we
   return compact.replace(/(\d[\d,]*(?:\.\d+)?)\s*(?:RWF|FRW)\b/gi, (_match, amount: string) => `${Math.round(Number(amount.replace(/,/g, '')) * rate).toLocaleString('en-US')} ${currencyCode}`);
 }
 
-function TelegramInvitePopup({ userId, countryCode, currencyCode = 'RWF', exchangeRate = 1, welcomeBonus }: { userId: string; countryCode?: string; currencyCode?: string; exchangeRate?: number; welcomeBonus?: number }) {
+function TelegramInvitePopup({ userId, currencyCode = 'RWF', exchangeRate = 1, welcomeBonus }: { userId: string; currencyCode?: string; exchangeRate?: number; welcomeBonus?: number }) {
   const [invitation, setInvitation] = useState<{ url: string; message: string; dismissalKey: string } | null>(null);
 
   useEffect(() => {
@@ -56,14 +56,13 @@ function TelegramInvitePopup({ userId, countryCode, currencyCode = 'RWF', exchan
       .then((settings) => {
         const url = settings?.telegramUrl ?? '';
         if (!active || (!url && !settings?.telegramPopupMessage)) return;
-        const popupWelcomeBonus = countryCode === 'UG' ? 45000 : countryCode === 'BI' ? 43500 : welcomeBonus;
-        const message = localizeAmounts(settings.telegramPopupMessage || 'Join our Telegram group for updates and support.', currencyCode, exchangeRate, popupWelcomeBonus);
+        const message = localizeAmounts(settings.telegramPopupMessage || 'Join our Telegram group for updates and support.', currencyCode, exchangeRate, welcomeBonus);
         const dismissalKey = `telegram-invite-dismissed:${userId}:${JSON.stringify([url, message])}`;
         if (!sessionStorage.getItem(dismissalKey)) setInvitation({ url, message, dismissalKey });
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [userId, countryCode, currencyCode, exchangeRate, welcomeBonus]);
+  }, [userId, currencyCode, exchangeRate, welcomeBonus]);
 
   const dismiss = () => {
     if (invitation) sessionStorage.setItem(invitation.dismissalKey, '1');
@@ -164,6 +163,6 @@ export default function App() {
     : page;
   if (isAuthRoute || !authLoaded || !authUser) return <FluentProvider theme={theme} className="fluent-app"><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></FluentProvider>;
   if (isAdminPath) return <FluentProvider theme={theme} className={authUser.role === 'ADMIN' ? 'fluent-app admin-console-provider' : 'fluent-app'}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></FluentProvider>;
-  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} countryCode={authUser.countryCode} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} welcomeBonus={authUser.displayWelcomeBonusAmount} />}</FluentProvider>;
+  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} welcomeBonus={authUser.displayWelcomeBonusAmount} />}</FluentProvider>;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidTrc20Address, usdtAmount } from '../api/money';
+import { isValidTrc20Address, usdtAmount, usdtDepositAmount } from '../api/money';
 
 describe('isValidTrc20Address', () => {
   it('accepts a well-formed TRC20 address', () => {
@@ -35,5 +35,19 @@ describe('usdtAmount', () => {
 
   it('returns 0 for a non-finite amount', () => {
     expect(usdtAmount(Number.NaN, 2500)).toBe(0);
+  });
+});
+
+describe('usdtDepositAmount', () => {
+  it('adds a percentage fee on the USDT amount', () => {
+    expect(usdtDepositAmount(10000, 1, 2500, { usdtDepositFeeType: 'PERCENTAGE', usdtDepositFeeValue: 15 })).toBe(4.6);
+  });
+
+  it('adds a fixed RWF fee before converting to USDT', () => {
+    expect(usdtDepositAmount(10000, 1, 2500, { usdtDepositFeeType: 'FIXED', usdtDepositFeeValue: 500 })).toBe(4.2);
+  });
+
+  it('returns 0 when the USDT rate is not configured', () => {
+    expect(usdtDepositAmount(10000, 1, 0, { usdtDepositFeeType: 'FIXED', usdtDepositFeeValue: 500 })).toBe(0);
   });
 });

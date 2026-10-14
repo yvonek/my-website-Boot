@@ -56,6 +56,8 @@ describe('Admin platform settings', () => {
       welcomeBonusAmount: 5000,
       minimumWithdrawal: 0,
       usdtFeePercent: 0,
+      usdtDepositFeeType: 'PERCENTAGE',
+      usdtDepositFeeValue: 0,
     });
   }, 20000);
 });

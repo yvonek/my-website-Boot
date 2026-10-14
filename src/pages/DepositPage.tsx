@@ -31,7 +31,7 @@ import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { TransactionHistory } from '../components/TransactionHistory';
 import { api } from '../api';
-import { applyUsdtFee, convertCurrencyAmount, formatCurrencyAmount, isValidCountryPhone, usdtAmount } from '../api/money';
+import { convertCurrencyAmount, formatCurrencyAmount, isValidCountryPhone, usdtDepositAmount } from '../api/money';
 import type { DepositPaymentMethod, WalletTransaction } from '../api/types';
 
 const maxScreenshotBytes = 4 * 1024 * 1024;
@@ -72,13 +72,16 @@ export function DepositPage() {
   const selectedMethod = methods.find((method) => method.id === selectedMethodId) ?? null;
   const currencyCode = selectedMethod?.currencyCode ?? methods[0]?.currencyCode ?? 'RWF';
   const countryCode = selectedMethod?.countryCode ?? methods[0]?.countryCode ?? 'RW';
+  const showMerchantDetails = countryCode === 'BI' || countryCode === 'UG';
   const phonePlaceholder = countryCode === 'BI' ? '06xxxxxxx' : countryCode === 'UG' ? '077xxxxxxx' : '078xxxxxxx';
   const numericAmount = Number(amount);
   const amountIsValid = Boolean(selectedMethod && Number.isSafeInteger(numericAmount) && numericAmount >= selectedMethod.minimumAmount && numericAmount <= selectedMethod.maximumAmount);
   const receivingCurrencyCode = selectedMethod?.receivingCurrencyCode ?? currencyCode;
   const isCryptoMethod = selectedMethod?.cryptoNetwork === 'TRC20';
-  const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? applyUsdtFee(usdtAmount(numericAmount, Number(selectedMethod.unitsPerUsdt ?? 0)), Number(selectedMethod.usdtFeePercent ?? 0), 'deposit') : convertCurrencyAmount(numericAmount, selectedMethod.customerUnitsPerRwf ?? 1, selectedMethod.receivingUnitsPerRwf ?? selectedMethod.customerUnitsPerRwf ?? 1)) : 0;
+  const customerUnitsPerRwf = selectedMethod?.customerUnitsPerRwf ?? 1;
+  const paymentAmount = amountIsValid && selectedMethod ? (isCryptoMethod ? usdtDepositAmount(numericAmount, customerUnitsPerRwf, Number(selectedMethod.unitsPerUsdt ?? 0), selectedMethod) : convertCurrencyAmount(numericAmount, 1, selectedMethod.receivingUnitsPerRwf ?? customerUnitsPerRwf)) : 0;
   const paymentLabel = isCryptoMethod ? `${paymentAmount.toFixed(2)} USDT` : formatCurrencyAmount(paymentAmount, receivingCurrencyCode);
+  const localEquivalent = amountIsValid ? formatCurrencyAmount(convertCurrencyAmount(numericAmount, 1, customerUnitsPerRwf), currencyCode) : '';
   const ussdCode = selectedMethod?.ussdTemplate && amountIsValid ? buildUssd(selectedMethod.ussdTemplate, selectedMethod.accountNumber, paymentAmount) : '';
   const copyValue = async (value: string, label: string) => {
     try { await navigator.clipboard.writeText(value); setCopied(label); window.setTimeout(() => setCopied(''), 1600); }
@@ -96,7 +99,7 @@ export function DepositPage() {
 
   const submitDeposit = async () => {
     if (!selectedMethod) { setDepositError('Select an active payment method.'); return; }
-    if (!Number.isSafeInteger(numericAmount) || numericAmount < selectedMethod.minimumAmount || numericAmount > selectedMethod.maximumAmount) { setDepositError(`Enter an amount between ${formatCurrencyAmount(selectedMethod.minimumAmount, currencyCode)} and ${formatCurrencyAmount(selectedMethod.maximumAmount, currencyCode)}.`); return; }
+    if (!Number.isSafeInteger(numericAmount) || numericAmount < selectedMethod.minimumAmount || numericAmount > selectedMethod.maximumAmount) { setDepositError(`Enter an amount between ${formatCurrencyAmount(selectedMethod.minimumAmount, 'RWF')} and ${formatCurrencyAmount(selectedMethod.maximumAmount, 'RWF')}.`); return; }
     if (!senderName.trim()) { setDepositError('Enter the full name on the paying account.'); return; }
     if (!isValidCountryPhone(phoneNumber, countryCode)) { setDepositError(`Enter a valid ${selectedMethod.countryCode ?? countryCode} phone number.`); return; }
     if (!screenshotData) { setDepositError('Attach a screenshot of your payment.'); return; }
@@ -113,19 +116,21 @@ export function DepositPage() {
     <section className="deposit-method-section" aria-labelledby="deposit-method-title">
       <div className="deposit-section-heading"><Text className="home-kicker" id="deposit-method-title">Payment method</Text></div>
       {methodsLoading ? <Card className="deposit-empty-methods"><Text>Loading payment methods...</Text></Card> : methods.length ? <div className="deposit-method-grid" role="group" aria-label="Available payment methods">{methods.map((method) => <button className={`deposit-method-card${selectedMethodId === method.id ? ' is-selected' : ''}`} type="button" key={method.id} aria-pressed={selectedMethodId === method.id} onClick={() => { setSelectedMethodId(method.id); setDepositError(''); setDepositSuccess(null); }}>
-        <span className="deposit-method-card__logo">{method.logoData ? <img src={method.logoData} alt="" /> : <span aria-hidden="true">{method.name.slice(0, 1).toUpperCase()}</span>}</span><span className="deposit-method-card__copy"><span className="deposit-method-card__name">{method.name}</span><span className="deposit-method-card__range">{formatCurrencyAmount(method.minimumAmount, method.currencyCode ?? currencyCode)} – {formatCurrencyAmount(method.maximumAmount, method.currencyCode ?? currencyCode)}</span></span><span className="deposit-method-card__check">{selectedMethodId === method.id && <CheckmarkRegular />}</span>
+        <span className="deposit-method-card__logo">{method.logoData ? <img src={method.logoData} alt="" /> : <span aria-hidden="true">{method.name.slice(0, 1).toUpperCase()}</span>}</span><span className="deposit-method-card__copy"><span className="deposit-method-card__name">{method.name}</span><span className="deposit-method-card__range">{formatCurrencyAmount(method.minimumAmount, 'RWF')} – {formatCurrencyAmount(method.maximumAmount, 'RWF')}</span></span><span className="deposit-method-card__check">{selectedMethodId === method.id && <CheckmarkRegular />}</span>
       </button>)}</div> : <Card className="deposit-empty-methods"><Text>{depositError || 'No active payment methods are currently available. Please contact support.'}</Text>{depositError && <Button appearance="secondary" onClick={() => void loadMethods()}>Retry</Button>}</Card>}
     </section>
 
-    <div className="deposit-amount-field"><Field label={`Amount (${currencyCode})`}><Input type="number" min={selectedMethod?.minimumAmount ?? 1} max={selectedMethod?.maximumAmount} value={amount} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setAmount(data.value)} placeholder={selectedMethod ? `${selectedMethod.minimumAmount}–${selectedMethod.maximumAmount}` : 'Enter amount'} /></Field></div>
-    {selectedMethod?.ussdTemplate && <div className="deposit-direct-action">{ussdCode ? <a className="deposit-pay-now" href={`tel:${encodeURIComponent(ussdCode)}`}><CallRegular /><span>PAY {paymentLabel} NOW</span></a> : <Button className="deposit-pay-now" appearance="primary" disabled icon={<CallRegular />}>Enter an amount in range</Button>}</div>}
+    <div className="deposit-amount-field"><Field label="Amount (RWF)"><Input type="number" min={selectedMethod?.minimumAmount ?? 1} max={selectedMethod?.maximumAmount} value={amount} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setAmount(data.value)} placeholder={selectedMethod ? `${selectedMethod.minimumAmount}–${selectedMethod.maximumAmount}` : 'Enter amount'} /></Field></div>
+    {showMerchantDetails && selectedMethod?.ussdTemplate && <div className="deposit-direct-action">{ussdCode ? <a className="deposit-pay-now" href={`tel:${encodeURIComponent(ussdCode)}`}><CallRegular /><span>PAY {paymentLabel} NOW</span></a> : <Button className="deposit-pay-now" appearance="primary" disabled icon={<CallRegular />}>Enter an amount in range</Button>}</div>}
 
     {selectedMethod && <Card className="deposit-details-card">
-      <div className="deposit-detail-row"><div><span>Merchant name</span><strong>{selectedMethod.accountName}</strong></div><Button appearance="secondary" icon={copied === 'merchant' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountName, 'merchant')}>{copied === 'merchant' ? 'Copied' : 'Copy'}</Button></div>
-      {isCryptoMethod && <div className="deposit-detail-row"><div><span>TRC20 USDT wallet address</span><strong>{selectedMethod.accountNumber}</strong></div><Button appearance="secondary" icon={copied === 'wallet' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountNumber, 'wallet')}>{copied === 'wallet' ? 'Copied' : 'Copy'}</Button></div>}
+      {showMerchantDetails && <div className="deposit-detail-row"><div><span>Merchant name</span><strong>{selectedMethod.accountName}</strong></div><Button appearance="secondary" icon={copied === 'merchant' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountName, 'merchant')}>{copied === 'merchant' ? 'Copied' : 'Copy'}</Button></div>}
+      {showMerchantDetails && <div className="deposit-detail-row"><div><span>{isCryptoMethod ? 'Merchant number (TRC20 USDT wallet)' : 'Merchant number'}</span><strong>{selectedMethod.accountNumber}</strong></div><Button appearance="secondary" icon={copied === 'number' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountNumber, 'number')}>{copied === 'number' ? 'Copied' : 'Copy'}</Button></div>}
+      {isCryptoMethod && !showMerchantDetails && <div className="deposit-detail-row"><div><span>TRC20 USDT wallet address</span><strong>{selectedMethod.accountNumber}</strong></div><Button appearance="secondary" icon={copied === 'wallet' ? <CheckmarkRegular /> : <ClipboardRegular />} onClick={() => copyValue(selectedMethod.accountNumber, 'wallet')}>{copied === 'wallet' ? 'Copied' : 'Copy'}</Button></div>}
       {selectedMethod.instructions && <Text className="deposit-instructions">{selectedMethod.instructions}</Text>}
+      {showMerchantDetails && amountIsValid && <div className="deposit-detail-row"><div><span>{isCryptoMethod ? 'Amount in USDT' : `Amount in ${currencyCode}`}</span><strong>{isCryptoMethod ? paymentLabel : localEquivalent}</strong></div></div>}
       {amountIsValid && <Text className="deposit-instructions">Send {paymentLabel} to {isCryptoMethod ? 'the TRC20 wallet address above' : 'the receiving account'}{!isCryptoMethod && selectedMethod.receivingCountryCode && selectedMethod.receivingCountryCode !== countryCode ? ` in ${selectedMethod.receivingCountryCode}` : ''}.</Text>}
-      {!selectedMethod.ussdTemplate && <Text className="deposit-instructions">A payment shortcut is not configured for this method. Use the merchant details above.</Text>}
+      {showMerchantDetails && !selectedMethod.ussdTemplate && <Text className="deposit-instructions">A payment shortcut is not configured for this method. Use the merchant details above.</Text>}
     </Card>}
 
     <Card className="money-card deposit-form-card"><div className="money-card__header"><span className="money-card__icon"><ArrowDownRegular /></span><div><Text weight="semibold">Submit deposit</Text><Text className="muted">Your balance changes after admin approval.</Text></div></div>

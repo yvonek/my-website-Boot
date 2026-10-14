@@ -133,9 +133,9 @@ test('RW, BI and UG users get local display values while canonical RWF accountin
   const ugDepositMethods = await request('/api/wallet/deposit/methods', {}, ugBuyer.cookie);
   assert.deepEqual(rwDepositMethods.body.methods.map((method) => method.name), ['RW Deposit']);
   assert.deepEqual(biDepositMethods.body.methods.map((method) => method.name), ['BI Deposit']);
-  assert.equal(biDepositMethods.body.methods[0].minimumAmount, 3000);
+  assert.equal(biDepositMethods.body.methods[0].minimumAmount, 1000);
   assert.deepEqual(ugDepositMethods.body.methods.map((method) => method.name), ['UG Deposit']);
-  assert.equal(ugDepositMethods.body.methods[0].minimumAmount, 2000);
+  assert.equal(ugDepositMethods.body.methods[0].minimumAmount, 1000);
   assert.deepEqual((await request('/api/wallet/withdraw/methods', {}, biReferrer.cookie)).body.methods.map((method) => method.code), ['AIRTEL_MONEY']);
   assert.deepEqual((await request('/api/wallet/withdraw/methods', {}, ugBuyer.cookie)).body.methods.map((method) => method.code), ['MTN_MOMO']);
   assert.equal((await request('/api/wallet/withdraw/methods', {}, rwUser.cookie)).body.methods.length, 2);
@@ -150,14 +150,14 @@ test('RW, BI and UG users get local display values while canonical RWF accountin
   assert.equal(ugCrossBorderMethod.customerUnitsPerRwf, 2);
   assert.equal(ugCrossBorderMethod.receivingCurrencyCode, 'BIF');
   assert.equal(ugCrossBorderMethod.receivingUnitsPerRwf, 3);
-  const crossBorderDeposit = await request('/api/deposits', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: 2000, phoneNumber: '+256771111123', senderName: 'Uganda Payer', depositMethodId: depositMethodIds.UG, screenshotData: imageData }) }, ugBuyer.cookie);
+  const crossBorderDeposit = await request('/api/deposits', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: 1000, phoneNumber: '+256771111123', senderName: 'Uganda Payer', depositMethodId: depositMethodIds.UG, screenshotData: imageData }) }, ugBuyer.cookie);
   assert.equal(crossBorderDeposit.response.status, 201);
   assert.equal(crossBorderDeposit.body.transaction.amount, 1000);
   assert.equal(crossBorderDeposit.body.transaction.depositReceivingCountryCode, 'BI');
   assert.equal(crossBorderDeposit.body.transaction.depositReceivingCurrencyCode, 'BIF');
   assert.equal(crossBorderDeposit.body.transaction.depositPaymentAmount, 3000);
 
-  const biDeposit = await request('/api/deposits', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: 3000, phoneNumber: '+25767111112', senderName: 'Burundi Referrer', depositMethodId: biDepositMethods.body.methods[0].id, screenshotData: imageData }) }, biReferrer.cookie);
+  const biDeposit = await request('/api/deposits', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: 1000, phoneNumber: '+25767111112', senderName: 'Burundi Referrer', depositMethodId: biDepositMethods.body.methods[0].id, screenshotData: imageData }) }, biReferrer.cookie);
   assert.equal(biDeposit.response.status, 201);
   assert.equal(biDeposit.body.transaction.amount, 1000);
   assert.equal(biDeposit.body.transaction.displayAmount, 3000);

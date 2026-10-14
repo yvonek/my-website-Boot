@@ -30,6 +30,13 @@ export function applyUsdtFee(usdt: number, feePercent: number, direction: 'depos
   return Math.max(0, Math.round(usdt * factor * 100) / 100);
 }
 
+// Admin USDT deposit fee: FIXED is entered in RWF and added to the RWF amount before conversion; PERCENTAGE adds a percent of USDT.
+export function usdtDepositAmount(amountRwf: number, customerUnitsPerRwf: number, unitsPerUsdt: number, fee: { usdtDepositFeeType?: 'PERCENTAGE' | 'FIXED'; usdtDepositFeeValue?: number }) {
+  if (!Number.isFinite(amountRwf)) return 0;
+  const value = Number.isFinite(fee.usdtDepositFeeValue) ? Number(fee.usdtDepositFeeValue) : 0;
+  if (fee.usdtDepositFeeType === 'FIXED') return usdtAmount(convertCurrencyAmount(amountRwf + value, 1, customerUnitsPerRwf), unitsPerUsdt);
+  return applyUsdtFee(usdtAmount(convertCurrencyAmount(amountRwf, 1, customerUnitsPerRwf), unitsPerUsdt), value, 'deposit');
+}
 export function convertCurrencyAmount(amount: number, sourceUnitsPerRwf: number, targetUnitsPerRwf: number) {
   if (!Number.isFinite(sourceUnitsPerRwf) || sourceUnitsPerRwf <= 0 || !Number.isFinite(targetUnitsPerRwf) || targetUnitsPerRwf <= 0) throw new Error('Positive exchange rates are required.');
   return Math.round(Math.round(Number(amount) / sourceUnitsPerRwf) * targetUnitsPerRwf);
