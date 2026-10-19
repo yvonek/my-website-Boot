@@ -1,9 +1,13 @@
-import type { AdminPlanInput, ApiClient, DailyCheckinClaim, DailyCheckinStatus, DashboardData, DepositRequest, LoginRequest, RegisterRequest, UserMessage, WalletProduct, WalletRequest, WalletTransactionResponse, WithdrawalAccountInput, WithdrawalPreview } from './types';
+import type { AdminPlanInput, ApiClient, DailyCheckinClaim, DailyCheckinStatus, DashboardData, DepositRequest, GiftCodeRedemption, LoginRequest, RegisterRequest, UserMessage, UserPushSubscription, WalletProduct, WalletRequest, WalletTransactionResponse, WithdrawalAccountInput, WithdrawalPreview } from './types';
+import { playNotificationSound } from '../notifications';
 
 const requestTimeoutMs = 30000;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
+  const method = init?.method?.toUpperCase() ?? 'GET';
+  const soundsOnPaymentResult = method !== 'GET' && /^\/api\/(?:purchases|deposits|withdrawals|wallet\/(?:gift-codes\/redeem|daily-checkin))$/.test(path);
+  const soundsOnFailure = soundsOnPaymentResult || method !== 'GET' && path === '/api/withdrawals/preview';
   let timeoutId: number | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = window.setTimeout(() => {
@@ -22,11 +26,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
           throw new Error('The API returned a non-JSON response. Check the backend deployment configuration.');
         }
         if (!response.ok) throw new Error(body.error ?? `Request failed with status ${response.status}`);
+        if (soundsOnPaymentResult) playNotificationSound();
         return body;
       })(),
       timeout,
     ]);
   } catch (error) {
+    if (soundsOnFailure) playNotificationSound();
     throw error;
   } finally {
     if (timeoutId !== undefined) window.clearTimeout(timeoutId);
@@ -56,6 +62,7 @@ export const liveClient: ApiClient = {
   markUserMessageRead: (messageId) => request(`/api/user/messages/${encodeURIComponent(messageId)}/read`, { method: 'PATCH', body: JSON.stringify({}) }),
   getDailyCheckin: () => request<DailyCheckinStatus>('/api/wallet/daily-checkin'),
   claimDailyCheckin: () => request<DailyCheckinClaim>('/api/wallet/daily-checkin', { method: 'POST' }),
+  redeemGiftCode: (code) => request<GiftCodeRedemption>('/api/wallet/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
   getDepositMethods: () => request('/api/deposit-methods'),
   createDeposit: (input) => createWalletRequest('/api/deposits', input),
   createWithdrawal: (input) => createWalletRequest('/api/withdrawals', input),
@@ -63,6 +70,10 @@ export const liveClient: ApiClient = {
   getWithdrawalAccount: () => request('/api/wallet/withdraw/account'),
   saveWithdrawalAccount: (input: WithdrawalAccountInput) => request('/api/wallet/withdraw/account', { method: 'PUT', body: JSON.stringify(input) }),
   getTransactions: () => request('/api/wallet/transactions'),
+    getTransactionStatuses: () => request<{ transactions: import('./types').WalletTransactionStatus[] }>('/api/wallet/transaction-statuses'),
+  getPushConfiguration: () => request<{ enabled: boolean; publicKey: string | null }>('/api/user/push/config'),
+  savePushSubscription: (subscription: UserPushSubscription) => request<{ saved: boolean }>('/api/user/push/subscriptions', { method: 'PUT', body: JSON.stringify({ subscription }) }),
+  removePushSubscription: (endpoint) => request<{ removed: boolean }>('/api/user/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
   getPaymentMethods: (type) => request(`/api/wallet/${type === 'deposit' ? 'deposit' : 'withdraw'}/methods`),
   createPurchase: (input) => request('/api/purchases', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': input.idempotencyKey }, body: JSON.stringify(input) }),
 };

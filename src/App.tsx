@@ -1,9 +1,10 @@
 import { Button, createDarkTheme, createLightTheme, FluentProvider, type BrandVariants } from '@fluentui/react-components';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import type { DashboardData, Plan } from './api/types';
+import type { DashboardData, Plan, TransactionStatus, WalletTransactionStatus } from './api/types';
 import { AppShell } from './components/AppShell';
 import type { AuthUser } from './api/types';
+import { playNotificationSound, unlockNotificationSound } from './notifications';
 
 const HomeDashboard = lazy(() => import('./pages/HomeDashboard').then((module) => ({ default: module.HomeDashboard })));
 const InvitePage = lazy(() => import('./pages/InvitePage').then((module) => ({ default: module.InvitePage })));
@@ -30,6 +31,15 @@ const brandRamp: BrandVariants = { 10: '#2a0710', 20: '#450b18', 30: '#600f20', 
 
 type ViewState = 'loading' | 'error' | 'empty' | 'data';
 const defaultPermissions = { dashboard: true, products: true, wallet: true, deposit: true, withdraw: true, myTeam: true, support: true, telegram: true, messages: true } as const;
+const decidedTransactionStatuses = new Set<TransactionStatus>(['APPROVED', 'AWAITING_PAYOUT', 'PROCESSING', 'SUCCESS', 'FAILED', 'REJECTED', 'CANCELLED']);
+
+export function hasNewTransactionDecision(previous: Map<string, TransactionStatus> | null, transactions: WalletTransactionStatus[]) {
+  if (!previous) return false;
+  return transactions.some((transaction) => {
+    const previousStatus = previous.get(transaction.id);
+    return previousStatus === undefined || previousStatus === 'PENDING' && decidedTransactionStatuses.has(transaction.status);
+  });
+}
 
 function isDashboardEmpty(data: DashboardData) {
   return data.metrics.length === 0 && data.plans.length === 0 && data.referrals.length === 0 && data.tools.length === 0;
@@ -38,6 +48,35 @@ function isDashboardEmpty(data: DashboardData) {
 function getInitialDarkMode() {
   const saved = localStorage.getItem('app-theme');
   return saved ? saved === 'dark' : window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
+function decodeApplicationServerKey(value: string) {
+  const padding = '='.repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(base64);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function registerPushSubscription(requestPermission: boolean) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+  const permission = Notification.permission === 'default' && requestPermission ? await Notification.requestPermission() : Notification.permission;
+  if (permission !== 'granted') return;
+  const config = await api.getPushConfiguration();
+  if (!config.enabled || !config.publicKey) return;
+  const registration = await navigator.serviceWorker.register('/service-worker.js');
+  await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeApplicationServerKey(config.publicKey) as BufferSource });
+  await api.savePushSubscription(subscription.toJSON() as import('./api/types').UserPushSubscription);
+}
+
+async function unregisterPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  const registration = await navigator.serviceWorker.getRegistration('/service-worker.js');
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return;
+  await api.removePushSubscription(subscription.endpoint).catch(() => undefined);
+  await subscription.unsubscribe();
 }
 
 function localizeAmounts(message: string, currencyCode: string, rate: number, welcomeBonus?: number) {
@@ -79,11 +118,22 @@ export default function App() {
   const [accessUser, setAccessUser] = useState<AuthUser | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);
   const [dark, setDark] = useState(getInitialDarkMode);
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => localStorage.getItem('notification-sound') === 'on');
   const [data, setData] = useState<DashboardData | null>(null);
   const [state, setState] = useState<ViewState>('loading');
   const [reloadToken, setReloadToken] = useState(0);
+  const onAdminRoute = path === '/admin' || path.startsWith('/admin/');
 
   useEffect(() => { const onPopState = () => setPath(window.location.pathname); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState); }, []);
+  useEffect(() => {
+    if (!notificationSoundEnabled) return;
+    document.addEventListener('pointerdown', unlockNotificationSound, true);
+    document.addEventListener('keydown', unlockNotificationSound, true);
+    return () => {
+      document.removeEventListener('pointerdown', unlockNotificationSound, true);
+      document.removeEventListener('keydown', unlockNotificationSound, true);
+    };
+  }, [notificationSoundEnabled]);
   useEffect(() => { api.getCurrentUser().then(({ user }) => { setAuthUser(user); setAccessUser(user); }).catch(() => { setAuthUser(null); setAccessUser(null); }).finally(() => setAuthLoaded(true)); }, []);
   useEffect(() => {
     if (!authLoaded || !authUser) return;
@@ -107,8 +157,57 @@ export default function App() {
     const timer = window.setInterval(() => void refreshAccess(), 15000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [authUser?.id]);
+  useEffect(() => {
+    if (!authLoaded || !authUser || onAdminRoute) return;
+    let cancelled = false;
+    let inFlight = false;
+    let previousMessageIds: Set<string> | null = null;
+    let previousPayoutDays: Map<string, number> | null = null;
+    let previousTransactionStatuses: Map<string, TransactionStatus> | null = null;
+    const pollNotifications = async () => {
+      if (cancelled || inFlight || document.visibilityState !== 'visible') return;
+      inFlight = true;
+      let hasNewNotification = false;
+      const [messagesResult, productsResult, transactionsResult] = await Promise.allSettled([api.getUserMessages(), api.getWalletProducts(), api.getTransactionStatuses()]);
+      if (cancelled) return;
+      if (messagesResult.status === 'fulfilled' && Array.isArray(messagesResult.value.messages)) {
+        const messageIds = new Set(messagesResult.value.messages.map((message) => message.id));
+        if (previousMessageIds && messagesResult.value.messages.some((message) => !previousMessageIds?.has(message.id))) hasNewNotification = true;
+        previousMessageIds = messageIds;
+      }
+      if (productsResult.status === 'fulfilled' && Array.isArray(productsResult.value.products)) {
+        const payoutDays = new Map(productsResult.value.products.map((product) => [product.id, product.incomePaidDays]));
+        if (previousPayoutDays && [...payoutDays].some(([id, days]) => days > (previousPayoutDays?.get(id) ?? 0))) hasNewNotification = true;
+        previousPayoutDays = payoutDays;
+      }
+      if (transactionsResult.status === 'fulfilled' && Array.isArray(transactionsResult.value.transactions)) {
+        if (hasNewTransactionDecision(previousTransactionStatuses, transactionsResult.value.transactions)) hasNewNotification = true;
+        previousTransactionStatuses = new Map(transactionsResult.value.transactions.map((transaction) => [transaction.id, transaction.status]));
+      }
+      if (hasNewNotification && notificationSoundEnabled) playNotificationSound();
+      inFlight = false;
+    };
+    void pollNotifications();
+    const timer = window.setInterval(() => void pollNotifications(), 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [authLoaded, authUser?.id, onAdminRoute, notificationSoundEnabled]);
+  useEffect(() => {
+    if (!authLoaded || !authUser || !notificationSoundEnabled) return;
+    void registerPushSubscription(false).catch(() => undefined);
+  }, [authLoaded, authUser?.id, notificationSoundEnabled]);
   useEffect(() => { localStorage.setItem('app-theme', dark ? 'dark' : 'light'); }, [dark]);
-  const onAdminRoute = path === '/admin' || path.startsWith('/admin/');
+  const toggleNotificationSound = async () => {
+    if (notificationSoundEnabled) {
+      setNotificationSoundEnabled(false);
+      localStorage.setItem('notification-sound', 'off');
+      await unregisterPushSubscription().catch(() => undefined);
+      return;
+    }
+    setNotificationSoundEnabled(true);
+    localStorage.setItem('notification-sound', 'on');
+    playNotificationSound();
+    await registerPushSubscription(true).catch(() => undefined);
+  };
   useEffect(() => {
     if (!authLoaded || !authUser || onAdminRoute) return;
     let cancelled = false;
@@ -163,6 +262,6 @@ export default function App() {
     : page;
   if (isAuthRoute || !authLoaded || !authUser) return <FluentProvider theme={theme} className="fluent-app"><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></FluentProvider>;
   if (isAdminPath) return <FluentProvider theme={theme} className={authUser.role === 'ADMIN' ? 'fluent-app admin-console-provider' : 'fluent-app'}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></FluentProvider>;
-  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} welcomeBonus={authUser.displayWelcomeBonusAmount} />}</FluentProvider>;
+  return <FluentProvider theme={theme} className="fluent-app"><AppShell path={path} dark={dark} isAdmin={authUser.role === 'ADMIN'} permissions={effectivePermissions} accountStatus={accessUser?.accountStatus ?? authUser.accountStatus ?? 'ACTIVE'} userName={authUser.fullName} notificationSoundEnabled={notificationSoundEnabled} onToggleNotificationSound={toggleNotificationSound} onLogout={logout} onToggleTheme={() => setDark((value) => !value)}><Suspense fallback={<div className="state-panel">Loading...</div>}>{renderedPage}</Suspense></AppShell>{authUser.role === 'USER' && <TelegramInvitePopup userId={authUser.id} currencyCode={authUser.currencyCode} exchangeRate={authUser.exchangeRate} welcomeBonus={authUser.displayWelcomeBonusAmount} />}</FluentProvider>;
 }
 

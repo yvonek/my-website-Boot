@@ -67,6 +67,13 @@ test('registers, hashes credentials, creates referral relationship and session',
   assert.equal(relationship.sponsor_user_id, result.body.user.id);
 });
 
+test('transaction status snapshot requires authentication and returns compact user-owned rows', async () => {
+  assert.equal((await request('/api/wallet/transaction-statuses')).response.status, 401);
+  const result = await request('/api/wallet/transaction-statuses', {}, referrerCookie);
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body, { transactions: [] });
+});
+
 test('logs in, rejects wrong password, and logout revokes protected session', async () => {
   const wrongPassword = await request('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phoneNumber: '0781234567', password: '999999' }) });
   assert.equal(wrongPassword.response.status, 401);
@@ -148,18 +155,31 @@ test('daily check-in is admin controlled, credits balance once per UTC day, and 
 
   const unauthorized = await request('/api/admin/daily-checkin', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: true, rewardAmount: 750 }) });
   assert.equal(unauthorized.response.status, 401);
-  const configured = await request('/api/admin/daily-checkin', { method: 'PUT', headers: adminHeaders, body: JSON.stringify({ enabled: true, rewardAmount: 750 }) });
+  const configured = await request('/api/admin/daily-checkin', { method: 'PUT', headers: adminHeaders, body: JSON.stringify({ enabled: true, rewardAmount: 200 }) });
   assert.equal(configured.response.status, 200);
-  assert.deepEqual(configured.body, { enabled: true, rewardAmount: 750 });
+  assert.deepEqual(configured.body, { enabled: true, rewardAmount: 200 });
 
   const status = await request('/api/wallet/daily-checkin', {}, referrerCookie);
   assert.equal(status.body.enabled, true);
   assert.equal(status.body.claimed, false);
+  assert.equal(status.body.rewardAmount, 200);
   const claim = await request('/api/wallet/daily-checkin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }, referrerCookie);
   assert.equal(claim.response.status, 201);
-  assert.equal(claim.body.rewardAmount, 750);
+  assert.equal(claim.body.rewardAmount, 200);
   const repeated = await request('/api/wallet/daily-checkin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }, referrerCookie);
   assert.equal(repeated.response.status, 409);
+
+  const secondUser = await request('/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fullName: 'Second Check-in Member', phoneNumber: '0781234577', password: '123456' }) });
+  const secondCookie = secondUser.setCookie.split(';')[0];
+  const secondStatus = await request('/api/wallet/daily-checkin', {}, secondCookie);
+  assert.equal(secondStatus.body.rewardAmount, 200);
+  const secondClaim = await request('/api/wallet/daily-checkin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }, secondCookie);
+  assert.equal(secondClaim.body.rewardAmount, 200);
+
+  const thirdUser = await request('/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fullName: 'Third Check-in Member', phoneNumber: '0781234578', password: '123456' }) });
+  const thirdCookie = thirdUser.setCookie.split(';')[0];
+  const thirdClaim = await request('/api/wallet/daily-checkin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }, thirdCookie);
+  assert.equal(thirdClaim.body.rewardAmount, 200);
   const balance = await request('/api/wallet/balance', {}, referrerCookie);
-  assert.equal(balance.body.availableBalance, 750);
+  assert.equal(balance.body.availableBalance, 200);
 });

@@ -1,10 +1,12 @@
 import { Button, Card, Field, Input, MessageBar, MessageBarBody, Text, Textarea, Title1, Title2 } from '@fluentui/react-components';
 import { useEffect, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import type { DepositPaymentMethod } from '../api/types';
 
 const maximumMethods = 4;
 type DepositMethodDraft = Omit<DepositPaymentMethod, 'id'> & { id: string };
+interface GiftCodeTierDraft { users: string; rewardAmount: string; }
+interface GiftCode { id: string; code: string; amount: number; tiers: { users: number; rewardAmount: number }[]; maxUses: number; expiresAt: string | null; isActive: boolean; createdAt: string; redemptionCount: number; }
 interface CountrySetting { countryCode: 'RW' | 'BI' | 'UG'; countryName: string; phonePrefix: string; currencyCode: 'RWF' | 'BIF' | 'UGX'; enabled: boolean; unitsPerRwf: number; unitsPerUsdt?: number; depositMethods: { code: string; name: string; enabled: boolean }[]; withdrawalMethods: { code: string; name: string; enabled: boolean }[]; }
 
 const emptyMethod = (countryCode: 'RW' | 'BI' | 'UG' = 'RW'): DepositMethodDraft => ({ id: '', name: '', accountName: '', accountNumber: '', instructions: '', ussdTemplate: '', minimumAmount: 1, maximumAmount: 1000000, logoData: null, enabled: false, position: 0, countryCode, crossBorderEnabled: false, receivingCountryCode: countryCode, cryptoNetwork: '' });
@@ -21,8 +23,13 @@ export function AdminBusinessSettingsPage({ sessionAdmin = false, section = 'all
   const [message, setMessage] = useState('');
   const [methodsLoading, setMethodsLoading] = useState(false);
   const [checkinEnabled, setCheckinEnabled] = useState(false);
-  const [checkinReward, setCheckinReward] = useState('');
+  const [checkinReward, setCheckinReward] = useState('0');
   const [checkinSaving, setCheckinSaving] = useState(false);
+  const [giftCodes, setGiftCodes] = useState<GiftCode[]>([]);
+  const [giftCodeDraft, setGiftCodeDraft] = useState('');
+  const [giftCodeTiers, setGiftCodeTiers] = useState<GiftCodeTierDraft[]>([{ users: '1', rewardAmount: '' }]);
+  const [giftCodeExpiry, setGiftCodeExpiry] = useState('');
+  const [giftCodeSaving, setGiftCodeSaving] = useState(false);
   const [platformSettingsLoading, setPlatformSettingsLoading] = useState(false);
   const [platformSettingsSaving, setPlatformSettingsSaving] = useState(false);
   const [withdrawalFeeEnabled, setWithdrawalFeeEnabled] = useState(false);
@@ -86,8 +93,50 @@ export function AdminBusinessSettingsPage({ sessionAdmin = false, section = 'all
     const body = await response.json();
     if (!response.ok) { setMessage(body.error ?? 'Daily check-in settings could not be loaded.'); return; }
     setCheckinEnabled(body.enabled);
-    setCheckinReward(String(body.rewardAmount));
+    setCheckinReward(String(body.rewardAmount ?? 0));
   };
+
+  const loadGiftCodes = async () => {
+    try {
+      const response = await fetch('/api/admin/gift-codes', { headers: headers() });
+      const body = await response.json();
+      if (!response.ok) { setMessage(body.error ?? 'Gift codes could not be loaded.'); return; }
+      setGiftCodes(body.codes);
+    } catch { setMessage('Gift codes could not be loaded.'); }
+  };
+
+  const createGiftCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setGiftCodeSaving(true);
+    try {
+      const tiers = giftCodeTiers.map((tier) => ({ users: Number(tier.users), rewardAmount: Number(tier.rewardAmount) }));
+      const maxUses = tiers.reduce((total, tier) => total + tier.users, 0);
+      const response = await fetch('/api/admin/gift-codes', { method: 'POST', headers: headers(), body: JSON.stringify({ code: giftCodeDraft, amount: tiers[0]?.rewardAmount ?? 0, maxUses, tiers, expiresAt: giftCodeExpiry ? new Date(giftCodeExpiry).toISOString() : null }) });
+      const body = await response.json();
+      if (!response.ok) { setMessage(body.error ?? 'Gift code could not be created.'); return; }
+      setGiftCodeDraft('');
+      setGiftCodeTiers([{ users: '1', rewardAmount: '' }]);
+      setGiftCodeExpiry('');
+      setMessage(`Gift code ${body.code.code} created.`);
+      await loadGiftCodes();
+    } catch { setMessage('Gift code could not be created.'); }
+    finally { setGiftCodeSaving(false); }
+  };
+
+  const deactivateGiftCode = async (code: GiftCode) => {
+    try {
+      const response = await fetch(`/api/admin/gift-codes/${encodeURIComponent(code.id)}/deactivate`, { method: 'PATCH', headers: headers() });
+      const body = await response.json();
+      if (!response.ok) { setMessage(body.error ?? 'Gift code could not be deactivated.'); return; }
+      setMessage(`${code.code} deactivated.`);
+      await loadGiftCodes();
+    } catch { setMessage('Gift code could not be deactivated.'); }
+  };
+
+  const addGiftCodeTier = () => setGiftCodeTiers((current) => current.length >= 20 ? current : [...current, { users: '1', rewardAmount: '' }]);
+  const updateGiftCodeTier = (index: number, key: keyof GiftCodeTierDraft, value: string) => setGiftCodeTiers((current) => current.map((tier, tierIndex) => tierIndex === index ? { ...tier, [key]: value } : tier));
+  const removeGiftCodeTier = (index: number) => setGiftCodeTiers((current) => current.length <= 1 ? current : current.filter((_, tierIndex) => tierIndex !== index));
+  const giftCodeTiersValid = giftCodeTiers.length > 0 && giftCodeTiers.length <= 20 && giftCodeTiers.every((tier) => Number.isSafeInteger(Number(tier.users)) && Number(tier.users) > 0 && Number.isSafeInteger(Number(tier.rewardAmount)) && Number(tier.rewardAmount) > 0) && giftCodeTiers.reduce((total, tier) => total + Number(tier.users), 0) <= 100000;
 
   const loadPlatformSettings = async () => {
     setPlatformSettingsLoading(true);
@@ -174,6 +223,7 @@ export function AdminBusinessSettingsPage({ sessionAdmin = false, section = 'all
       const response = await fetch('/api/admin/daily-checkin', { method: 'PUT', headers: headers(), body: JSON.stringify({ enabled: checkinEnabled, rewardAmount: Number(checkinReward) }) });
       const body = await response.json();
       setMessage(response.ok ? 'Daily check-in settings saved.' : body.error ?? 'Daily check-in settings could not be saved.');
+      if (response.ok) setCheckinReward(String(body.rewardAmount));
     } catch { setMessage('Daily check-in settings could not be saved.'); }
     finally { setCheckinSaving(false); }
   };
@@ -206,7 +256,7 @@ export function AdminBusinessSettingsPage({ sessionAdmin = false, section = 'all
     setMessage('Deposit payment method deleted.'); await loadMethods();
   };
 
-  useEffect(() => { if (token || sessionAdmin) { void load(); void loadMethods(); void loadDailyCheckin(); if (section === 'settings') { void loadPlatformSettings(); void loadSupportSettings(); void loadCountries(); } } else { setMethods([]); setCountries([]); setMessage(''); } }, [token, sessionAdmin]);
+  useEffect(() => { if (token || sessionAdmin) { void load(); void loadMethods(); void loadDailyCheckin(); if (section === 'rewards') void loadGiftCodes(); if (section === 'settings') { void loadPlatformSettings(); void loadSupportSettings(); void loadCountries(); } } else { setMethods([]); setCountries([]); setMessage(''); } }, [token, sessionAdmin]);
 
   const methodEditor = (method: DepositMethodDraft, isNew: boolean) => {
     const setField = <K extends keyof DepositMethodDraft>(key: K, value: DepositMethodDraft[K]) => {
@@ -243,7 +293,8 @@ export function AdminBusinessSettingsPage({ sessionAdmin = false, section = 'all
     {section === 'settings' && <section className="platform-settings-section"><Card className="settings-card"><Title2>Countries and USDT rates</Title2><Text className="muted">Enable each country, set its RWF and USDT (TRC20) rates, and choose which withdrawal methods users in that country can bind. Set a USDT rate before enabling USDT withdrawals.</Text><a className="admin-page-link" href="/admin/countries">Open Countries and USDT rates</a></Card><div className="deposit-admin-section__heading"><div><Text className="home-kicker">GLOBAL CONFIGURATION</Text><Title2>Platform settings</Title2><Text className="muted">Changes apply to eligible new accounts and future withdrawal requests.</Text></div>{platformSettingsLoading && <Text className="muted">Loading settings...</Text>}</div><div className="platform-settings-grid"><Field label="Minimum withdrawal (RWF)"><Input type="number" min="0" value={minimumWithdrawal} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setMinimumWithdrawal(data.value)} /></Field><Card className="settings-card platform-setting-card"><div><Text className="home-kicker">USDT (TRC20)</Text><Title2>USDT fee</Title2></div><Field label="Deposit fee type"><select value={usdtDepositFeeType} onChange={(event) => setUsdtDepositFeeType(event.currentTarget.value as 'PERCENTAGE' | 'FIXED')}><option value="PERCENTAGE">Percentage (%)</option><option value="FIXED">Fixed (RWF)</option></select></Field><Field label={usdtDepositFeeType === 'FIXED' ? 'Deposit fee (RWF)' : 'Deposit fee (%)'}><Input type="number" min="0" max={usdtDepositFeeType === 'FIXED' ? '100000' : '99.99'} step={usdtDepositFeeType === 'FIXED' ? '1' : '0.01'} value={usdtDepositFeeValue} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setUsdtDepositFeeValue(data.value)} /></Field><Field label="Withdrawal fee (%)"><Input type="number" min="0" max="99.99" step="0.01" value={usdtFeePercent} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setUsdtFeePercent(data.value)} /></Field><Text className="muted">Deposits pay the deposit fee on top of the USDT amount. Withdrawals receive the withdrawal percentage less USDT.</Text><Button appearance="primary" disabled={platformSettingsLoading || platformSettingsSaving} onClick={() => void savePlatformSettings()}>{platformSettingsSaving ? 'Saving...' : 'Save USDT fee'}</Button></Card><Card className="settings-card platform-setting-card"><div><Text className="home-kicker">ACCOUNT</Text><Title2>Welcome bonus</Title2></div><label className="deposit-admin-status"><input type="checkbox" checked={welcomeBonusEnabled} onChange={(event) => setWelcomeBonusEnabled(event.currentTarget.checked)} /><span>{welcomeBonusEnabled ? 'Enabled for new accounts' : 'Disabled'}</span></label><Field label="Welcome bonus amount (RWF)"><Input type="number" min="0" step="1" value={welcomeBonusAmount} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setWelcomeBonusAmount(value.value)} /></Field><Text className="muted">Awarded once during registration. Existing accounts and product purchase bonuses are not changed.</Text><Button appearance="primary" disabled={platformSettingsLoading || platformSettingsSaving} onClick={() => void savePlatformSettings()}>{platformSettingsSaving ? 'Saving...' : 'Save settings'}</Button></Card><Card className="settings-card platform-setting-card"><div><Text className="home-kicker">PAYOUTS</Text><Title2>Withdrawal fee</Title2></div><label className="deposit-admin-status"><input type="checkbox" checked={withdrawalFeeEnabled} onChange={(event) => setWithdrawalFeeEnabled(event.currentTarget.checked)} /><span>{withdrawalFeeEnabled ? 'Fee enabled' : 'Fee disabled'}</span></label><Field label="Fee type"><select value={withdrawalFeeType} onChange={(event) => setWithdrawalFeeType(event.currentTarget.value as 'PERCENTAGE' | 'FIXED')}><option value="PERCENTAGE">Percentage</option><option value="FIXED">Fixed amount</option></select></Field><Field label={withdrawalFeeType === 'PERCENTAGE' ? 'Fee value (%)' : 'Fee value (RWF)'}><Input type="number" min="0" max={withdrawalFeeType === 'PERCENTAGE' ? '100' : undefined} step={withdrawalFeeType === 'PERCENTAGE' ? '0.01' : '1'} value={withdrawalFeeValue} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setWithdrawalFeeValue(value.value)} /></Field><Text className="muted">Applied by the backend to future withdrawals. Existing transaction fee snapshots remain unchanged.</Text><Button appearance="primary" disabled={platformSettingsLoading || platformSettingsSaving} onClick={() => void savePlatformSettings()}>{platformSettingsSaving ? 'Saving...' : 'Save settings'}</Button></Card></div></section>}
     {section === 'settings' && <Card className="settings-card platform-setting-card"><div><Text className="home-kicker">USER COMMUNICATION</Text><Title2>Telegram group and support email</Title2></div><Field label="Telegram group link"><Input type="url" value={telegramUrl} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setTelegramUrl(value.value)} placeholder="https://t.me/yourgroup" /></Field><Field label="Popup message (600 characters max)"><Textarea maxLength={600} resize="vertical" value={telegramPopupMessage} onChange={(_: ChangeEvent<HTMLTextAreaElement>, value: { value: string }) => setTelegramPopupMessage(value.value)} placeholder="Join our Telegram group for updates and support." /></Field><Field label="Support email"><Input type="email" value={supportEmail} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setSupportEmail(value.value)} placeholder="support@example.com" /></Field><Button appearance="primary" disabled={supportSettingsSaving} onClick={() => void saveSupportSettings()}>{supportSettingsSaving ? 'Saving...' : 'Save support settings'}</Button></Card>}
     {showMethods && <section className="deposit-admin-section"><div className="deposit-admin-section__heading"><div><Text className="home-kicker">Admin managed</Text><Title2>Deposit payment methods</Title2><Text className="muted">Only active methods with merchant details appear for their country. Maximum {maximumMethods} methods per country.</Text></div><Field label="Country"><select value={selectedDepositCountry} onChange={(event) => setSelectedDepositCountry(event.currentTarget.value as 'RW' | 'BI' | 'UG')}>{countries.map((country) => <option key={country.countryCode} value={country.countryCode}>{country.countryName} · {country.currencyCode}</option>)}</select></Field><Button appearance="primary" disabled={(!token && !sessionAdmin) || methodsLoading || visibleMethods.length >= maximumMethods || Boolean(draft)} onClick={() => setDraft(emptyMethod(selectedDepositCountry))}>Add payment method</Button></div>{methodsLoading ? <Text className="muted">Loading deposit methods...</Text> : visibleMethods.length ? visibleMethods.map((method) => methodEditor(method, false)) : token || sessionAdmin ? <Text className="muted">No deposit methods configured for {selectedDepositCountry}.</Text> : <Text className="muted">Enter the admin token to manage deposit methods.</Text>}{draft && methodEditor(draft, true)}</section>}
-    {showCheckin && <Card className="settings-card"><Title2>Daily check-in</Title2><Text className="muted">Set the daily reward and enable or pause check-in claims for all users.</Text><div className="daily-checkin-admin"><label className="deposit-admin-status"><input type="checkbox" checked={checkinEnabled} onChange={(event) => setCheckinEnabled(event.currentTarget.checked)} /><span>{checkinEnabled ? 'Enabled for users' : 'Paused'}</span></label><Field label="Reward per day (RWF)"><Input type="number" min="1" step="1" value={checkinReward} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setCheckinReward(value.value)} /></Field><Button appearance="primary" disabled={checkinSaving || (!token && !sessionAdmin)} onClick={() => void saveDailyCheckin()}>{checkinSaving ? 'Saving...' : 'Save check-in'}</Button></div></Card>}
+    {section === 'rewards' && <Card className="settings-card"><Title2>Gift codes</Title2><Text className="muted">Set a different reward for each group of users who redeem the code. Groups are filled in order.</Text><form className="gift-code-admin-form" onSubmit={(event) => void createGiftCode(event)}><Field label="Code"><Input autoComplete="off" maxLength={32} value={giftCodeDraft} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setGiftCodeDraft(value.value.toUpperCase())} placeholder="WELCOME-5000" /></Field><div className="gift-code-tier-list">{giftCodeTiers.map((tier, index) => <div className="gift-code-tier-row" key={index}><Text weight="semibold">Tier {index + 1}</Text><Field label="Users in tier"><Input type="number" min="1" step="1" value={tier.users} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => updateGiftCodeTier(index, 'users', value.value)} /></Field><Field label="Reward per user (RWF)"><Input type="number" min="1" step="1" value={tier.rewardAmount} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => updateGiftCodeTier(index, 'rewardAmount', value.value)} /></Field>{giftCodeTiers.length > 1 && <Button appearance="subtle" type="button" aria-label={`Remove tier ${index + 1}`} onClick={() => removeGiftCodeTier(index)}>Remove</Button>}</div>)}<Button appearance="secondary" type="button" disabled={giftCodeTiers.length >= 20} onClick={addGiftCodeTier}>Add tier</Button><Text className="muted">Total redemptions: {giftCodeTiers.reduce((total, tier) => total + (Number(tier.users) || 0), 0)}</Text></div><Field label="Expiry (optional)"><Input type="datetime-local" value={giftCodeExpiry} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setGiftCodeExpiry(value.value)} /></Field><Button appearance="primary" type="submit" disabled={giftCodeSaving || !giftCodeDraft.trim() || !giftCodeTiersValid}>{giftCodeSaving ? 'Creating...' : 'Create gift code'}</Button></form><div className="gift-code-admin-list">{giftCodes.map((code) => <div className="gift-code-admin-row" key={code.id}><div><strong>{code.code}</strong><span>{code.tiers.map((tier) => `${tier.users} users · ${tier.rewardAmount.toLocaleString()} RWF`).join(' → ')} · {code.redemptionCount}/{code.maxUses} redeemed{code.expiresAt ? ` · Expires ${new Date(code.expiresAt).toLocaleString()}` : ''}</span></div><Button appearance="secondary" disabled={!code.isActive} onClick={() => void deactivateGiftCode(code)}>{code.isActive ? 'Deactivate' : 'Inactive'}</Button></div>)}</div></Card>}
+    {showCheckin && <Card className="settings-card"><Title2>Daily check-in</Title2><Text className="muted">Set one daily reward for every eligible user and enable or pause check-in claims.</Text><div className="daily-checkin-admin"><label className="deposit-admin-status"><input type="checkbox" checked={checkinEnabled} onChange={(event) => setCheckinEnabled(event.currentTarget.checked)} /><span>{checkinEnabled ? 'Enabled for users' : 'Paused'}</span></label><Field label="Reward per day (RWF)"><Input type="number" min="0" step="1" value={checkinReward} onChange={(_: ChangeEvent<HTMLInputElement>, value: { value: string }) => setCheckinReward(value.value)} /></Field><Button appearance="primary" disabled={checkinSaving || (!token && !sessionAdmin)} onClick={() => void saveDailyCheckin()}>{checkinSaving ? 'Saving...' : 'Save check-in'}</Button></div></Card>}
     {showReferrals && <Card className="settings-card"><Title2>Referral commission</Title2>{levels.map((item) => <div className="settings-row" key={item.level}><Field label={`Level ${item.level} percentage`}><Input type="number" min="0" max="100" value={item.percentage} onChange={(_: ChangeEvent<HTMLInputElement>, data: { value: string }) => setLevels((current) => current.map((level) => level.level === item.level ? { ...level, percentage: data.value } : level))} /></Field><Button onClick={() => void saveLevel(item.level, item.percentage)}>Save Level {item.level}</Button></div>)}</Card>}
   </div>;
 }

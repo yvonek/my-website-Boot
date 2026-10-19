@@ -1,13 +1,64 @@
 import { randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import { attachDatabasePool } from '@neon/functions';
+import webPush from 'web-push';
 import { convertLocalToRwf, convertRwfToLocal, normalizeCountryPhone, supportedCountries } from '../backend/currency.mjs';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5, application_name: 'rwanda-wealth-account-api' });
 attachDatabasePool(pool);
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
+const pushReady = Boolean(vapidPublicKey && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
+if (pushReady) webPush.setVapidDetails(process.env.VAPID_SUBJECT!, vapidPublicKey, process.env.VAPID_PRIVATE_KEY!);
+
+type PushPayload = { title: string; body: string; url: string; tag: string };
+
+async function sendPushToSubscriptions(rows: { endpoint: string; subscription: unknown }[], payload: PushPayload) {
+  if (!pushReady) return;
+  await Promise.allSettled(rows.map(async (row) => {
+    try {
+      const subscription = typeof row.subscription === 'string' ? JSON.parse(row.subscription) : row.subscription;
+      await webPush.sendNotification(subscription as webPush.PushSubscription, JSON.stringify(payload));
+    } catch (error) {
+      const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error ? Number(error.statusCode) : 0;
+      if (statusCode === 404 || statusCode === 410) await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [row.endpoint]);
+    }
+  }));
+}
+
+async function pushToUser(userId: string, payload: PushPayload) {
+  if (!pushReady) return;
+  const rows = await pool.query('SELECT endpoint, subscription FROM push_subscriptions WHERE user_id = $1', [userId]);
+  await sendPushToSubscriptions(rows.rows, payload);
+}
+
+async function pushToAllUsers(payload: PushPayload) {
+  if (!pushReady) return;
+  const rows = await pool.query("SELECT s.endpoint, s.subscription FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE u.role = 'USER'");
+  await sendPushToSubscriptions(rows.rows, payload);
+}
 
 const sessionLifetimeSeconds = 60 * 60 * 24 * 7;
 const defaultPermissions = ['dashboard', 'products', 'wallet', 'deposit', 'withdraw', 'myTeam', 'support', 'telegram', 'messages'];
+
+function normalizeGiftCodeTiers(value: unknown, fallbackAmount: number, fallbackMaxUses: number) {
+  let tiers: unknown = value;
+  if (typeof tiers === 'string') { try { tiers = JSON.parse(tiers); } catch { return null; } }
+  if (tiers === undefined) tiers = [{ users: fallbackMaxUses, rewardAmount: fallbackAmount }];
+  if (!Array.isArray(tiers) || tiers.length < 1 || tiers.length > 20) return null;
+  const parsed = tiers.map((tier) => ({ users: Number((tier as { users?: unknown })?.users), rewardAmount: Number((tier as { rewardAmount?: unknown })?.rewardAmount) }));
+  const maxUses = parsed.reduce((total, tier) => total + tier.users, 0);
+  if (parsed.some((tier) => !Number.isSafeInteger(tier.users) || tier.users <= 0 || !Number.isSafeInteger(tier.rewardAmount) || tier.rewardAmount <= 0) || !Number.isSafeInteger(maxUses) || maxUses > 100000) return null;
+  return parsed;
+}
+
+function giftCodeTierForUse(useCount: number, tiers: { users: number; rewardAmount: number }[]) {
+  let remaining = useCount;
+  for (const tier of tiers) {
+    if (remaining < tier.users) return tier;
+    remaining -= tier.users;
+  }
+  return null;
+}
 
 function json(body: unknown, status = 200, headers: HeadersInit = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } });
@@ -576,6 +627,29 @@ export default {
         return json({ accountStatus: access.accountStatus, allowDeposits: access.allowDeposits, allowWithdrawals: access.allowWithdrawals, permissions: access.permissions });
       }
 
+      if (path === '/api/user/push/config' && method === 'GET') {
+        return json({ enabled: pushReady, publicKey: pushReady ? vapidPublicKey : null });
+      }
+
+      if (path === '/api/user/push/subscriptions' && method === 'PUT') {
+        if (!pushReady) return json({ error: 'Background notifications are not configured.' }, 503);
+        const input = await readBody(request);
+        const subscription = input.subscription as { endpoint?: unknown; expirationTime?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } | undefined;
+        const endpoint = String(subscription?.endpoint ?? '');
+        const p256dh = String(subscription?.keys?.p256dh ?? '');
+        const auth = String(subscription?.keys?.auth ?? '');
+        if (!endpoint.startsWith('https://') || !p256dh || !auth) return json({ error: 'A valid browser push subscription is required.' }, 400);
+        await pool.query('INSERT INTO push_subscriptions (endpoint, user_id, subscription, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, subscription = EXCLUDED.subscription, updated_at = EXCLUDED.updated_at', [endpoint, user.id, JSON.stringify({ endpoint, expirationTime: subscription?.expirationTime ?? null, keys: { p256dh, auth } }), now()]);
+        return json({ saved: true }, 201);
+      }
+
+      if (path === '/api/user/push/subscriptions' && method === 'DELETE') {
+        const input = await readBody(request);
+        const endpoint = String(input.endpoint ?? '');
+        const result = await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2', [endpoint, user.id]);
+        return json({ removed: result.rowCount > 0 });
+      }
+
       if (path === '/api/presence' && method === 'POST') {
         const input = await readBody(request);
         if (input.leave === true) {
@@ -654,21 +728,25 @@ export default {
           currencyForUser(user.id),
         ]);
         const values = Object.fromEntries(settings.rows.map((row) => [row.key, row.value]));
-        const rewardAmount = Number(values.daily_checkin_reward_amount ?? 0);
-        return json({ enabled: values.daily_checkin_enabled === '1', rewardAmount, displayRewardAmount: localAmount(rewardAmount, currency.unitsPerRwf), currencyCode: currency.currencyCode, claimed: claim.rows.length > 0, claimedAt: claim.rows[0]?.claimedAt ?? null });
+        const rewardAmount = Number(claim.rows[0]?.rewardAmount ?? values.daily_checkin_reward_amount ?? 0);
+        return json({ enabled: values.daily_checkin_enabled === '1' && rewardAmount > 0, rewardAmount, displayRewardAmount: localAmount(rewardAmount, currency.unitsPerRwf), currencyCode: currency.currencyCode, claimed: claim.rows.length > 0, claimedAt: claim.rows[0]?.claimedAt ?? null });
       }
 
       if (path === '/api/wallet/daily-checkin' && method === 'POST') {
         const today = new Date().toISOString().slice(0, 10);
-        const settings = await pool.query("SELECT key, value FROM support_settings WHERE key IN ('daily_checkin_enabled', 'daily_checkin_reward_amount')");
-        const values = Object.fromEntries(settings.rows.map((row) => [row.key, row.value]));
-        const rewardAmount = Number(values.daily_checkin_reward_amount ?? 0);
-        if (values.daily_checkin_enabled !== '1' || rewardAmount <= 0) return json({ error: 'Daily check-in is not enabled.' }, 403);
         const client = await pool.connect();
+        let rewardAmount = 0;
         try {
           await client.query('BEGIN');
-          const claimed = await client.query('INSERT INTO daily_checkins (user_id, checkin_date, reward_amount) VALUES ($1,$2,$3) ON CONFLICT (user_id, checkin_date) DO NOTHING RETURNING user_id', [user.id, today, rewardAmount]);
-          if (!claimed.rowCount) { await client.query('ROLLBACK'); return json({ error: 'Daily check-in has already been claimed today.' }, 409); }
+          const settings = await client.query("SELECT key, value FROM support_settings WHERE key IN ('daily_checkin_enabled', 'daily_checkin_reward_amount')");
+          const values = Object.fromEntries(settings.rows.map((row) => [row.key, row.value]));
+          if (values.daily_checkin_enabled !== '1') { await client.query('ROLLBACK'); return json({ error: 'Daily check-in is not enabled.' }, 403); }
+          const existing = await client.query('SELECT 1 FROM daily_checkins WHERE user_id = $1 AND checkin_date = $2', [user.id, today]);
+          if (existing.rowCount) { await client.query('ROLLBACK'); return json({ error: 'Daily check-in has already been claimed today.' }, 409); }
+          rewardAmount = Number(values.daily_checkin_reward_amount ?? 0);
+          if (!Number.isSafeInteger(rewardAmount) || rewardAmount <= 0) { await client.query('ROLLBACK'); return json({ error: 'All daily check-in rewards for today have been claimed.' }, 403); }
+          const inserted = await client.query('INSERT INTO daily_checkins (user_id, checkin_date, reward_amount) VALUES ($1,$2,$3) ON CONFLICT (user_id, checkin_date) DO NOTHING RETURNING user_id', [user.id, today, rewardAmount]);
+          if (!inserted.rowCount) { await client.query('ROLLBACK'); return json({ error: 'Daily check-in has already been claimed today.' }, 409); }
           await client.query('UPDATE wallet_accounts SET available_balance = available_balance + $1, updated_at = $2 WHERE user_id = $3', [rewardAmount, now(), user.id]);
           await client.query('COMMIT');
         } catch (error) {
@@ -678,7 +756,45 @@ export default {
           client.release();
         }
         const currency = await currencyForUser(user.id);
+        await pushToUser(user.id, { title: 'Daily check-in received', body: `You received ${localAmount(rewardAmount, currency.unitsPerRwf).toLocaleString()} ${currency.currencyCode}.`, url: '/', tag: `checkin:${today}:${user.id}` });
         return json({ claimed: true, rewardAmount, displayRewardAmount: localAmount(rewardAmount, currency.unitsPerRwf), currencyCode: currency.currencyCode, checkinDate: today, balance: await balanceView(user.id) }, 201);
+      }
+
+      if (path === '/api/wallet/gift-codes/redeem' && method === 'POST') {
+        if (user.accountStatus === 'FROZEN' || user.accountStatus === 'SUSPENDED') return json({ error: 'Your account is restricted from redeeming gift codes.', code: `ACCOUNT_${user.accountStatus}` }, 403);
+        if (!user.permissions.wallet) return json({ error: 'Access to wallet is disabled for this account. Contact support.', code: 'FEATURE_DISABLED', feature: 'wallet' }, 403);
+        const input = await readBody(request);
+        const code = String(input.code ?? '').trim().toUpperCase();
+        if (!/^[A-Z0-9][A-Z0-9-]{3,31}$/.test(code)) return json({ error: 'Enter a valid gift code.' }, 400);
+        const client = await pool.connect();
+        let gift: { id: string; amount: number; reward_tiers: unknown; max_uses: number; expires_at: string | null; is_active: boolean } | undefined;
+        try {
+          await client.query('BEGIN');
+          const result = await client.query('SELECT id, amount, reward_tiers, max_uses, expires_at, is_active FROM gift_codes WHERE code = $1 FOR UPDATE', [code]);
+          gift = result.rows[0];
+          if (!gift) { await client.query('ROLLBACK'); return json({ error: 'Gift code not found.' }, 404); }
+          if (!gift.is_active || gift.expires_at && new Date(gift.expires_at).getTime() <= Date.now()) { await client.query('ROLLBACK'); return json({ error: 'This gift code is no longer active.' }, 410); }
+          const existing = await client.query('SELECT 1 FROM gift_code_redemptions WHERE code_id = $1 AND user_id = $2', [gift.id, user.id]);
+          if (existing.rowCount) { await client.query('ROLLBACK'); return json({ error: 'You have already redeemed this gift code.' }, 409); }
+          const uses = await client.query('SELECT count(*)::integer AS count FROM gift_code_redemptions WHERE code_id = $1', [gift.id]);
+          if (uses.rows[0].count >= gift.max_uses) { await client.query('ROLLBACK'); return json({ error: 'This gift code has reached its redemption limit.' }, 409); }
+          const tiers = normalizeGiftCodeTiers(gift.reward_tiers, Number(gift.amount), Number(gift.max_uses));
+          const tier = tiers && giftCodeTierForUse(Number(uses.rows[0].count), tiers);
+          const rewardAmount = Number(tier?.rewardAmount ?? 0);
+          if (!rewardAmount) { await client.query('ROLLBACK'); return json({ error: 'This gift code has no reward remaining.' }, 409); }
+          await client.query('INSERT INTO gift_code_redemptions (id, code_id, user_id, redeemed_at, reward_amount) VALUES ($1, $2, $3, $4, $5)', [randomUUID(), gift.id, user.id, now(), rewardAmount]);
+          await client.query('UPDATE wallet_accounts SET available_balance = available_balance + $1, updated_at = $2 WHERE user_id = $3', [rewardAmount, now(), user.id]);
+          gift.amount = rewardAmount;
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+        const currency = await currencyForUser(user.id);
+        await pushToUser(user.id, { title: 'Gift code redeemed', body: `You received ${localAmount(gift.amount, currency.unitsPerRwf).toLocaleString()} ${currency.currencyCode}.`, url: '/wallet', tag: `gift-code:${gift.id}:${user.id}` });
+        return json({ redeemed: true, amount: gift.amount, displayAmount: localAmount(gift.amount, currency.unitsPerRwf), currencyCode: currency.currencyCode, balance: await balanceView(user.id) });
       }
 
       if (path === '/api/support/settings' && method === 'GET') {
@@ -747,9 +863,21 @@ export default {
         const input = await readBody(request);
         const enabled = Boolean(input.enabled);
         const rewardAmount = Number(input.rewardAmount ?? 0);
-        await pool.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', ['daily_checkin_enabled', enabled ? '1' : '0', now()]);
-        await pool.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', ['daily_checkin_reward_amount', String(Number.isFinite(rewardAmount) ? rewardAmount : 0), now()]);
-        return json({ enabled, rewardAmount: Number.isFinite(rewardAmount) ? rewardAmount : 0 });
+        if (!Number.isSafeInteger(rewardAmount) || rewardAmount < 0 || enabled && rewardAmount <= 0) return json({ error: 'Enter one positive whole-number reward while daily check-in is enabled.' }, 400);
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', ['daily_checkin_enabled', enabled ? '1' : '0', now()]);
+          await client.query('INSERT INTO support_settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', ['daily_checkin_reward_amount', String(rewardAmount), now()]);
+          await client.query('DELETE FROM support_settings WHERE key = $1', ['daily_checkin_reward_tiers']);
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+        return json({ enabled, rewardAmount });
       }
 
       if (path === '/api/admin/referral-settings' && method === 'GET') {
@@ -767,6 +895,48 @@ export default {
         return json({ settings: (await pool.query('SELECT level, percentage FROM referral_settings ORDER BY level')).rows });
       }
 
+      if (path === '/api/admin/gift-codes' && method === 'GET') {
+        if (user.role !== 'ADMIN') return json({ error: 'Admin authentication required.' }, 401);
+        const result = await pool.query(`SELECT c.id, c.code, c.amount, c.reward_tiers AS tiers, c.max_uses AS "maxUses", c.expires_at AS "expiresAt",
+          c.is_active AS "isActive", c.created_at AS "createdAt", count(r.id)::integer AS "redemptionCount"
+          FROM gift_codes c LEFT JOIN gift_code_redemptions r ON r.code_id = c.id GROUP BY c.id ORDER BY c.created_at DESC`);
+        return json({ codes: result.rows.map((row) => ({ ...row, tiers: normalizeGiftCodeTiers(row.tiers, Number(row.amount), Number(row.maxUses)) ?? [] })) });
+      }
+
+      if (path === '/api/admin/gift-codes' && method === 'POST') {
+        if (user.role !== 'ADMIN') return json({ error: 'Admin authentication required.' }, 401);
+        const input = await readBody(request);
+        const code = String(input.code ?? '').trim().toUpperCase();
+        const legacyAmount = Number(input.amount);
+        const legacyMaxUses = Number(input.maxUses);
+        const tiers = normalizeGiftCodeTiers(input.tiers, legacyAmount, legacyMaxUses);
+        const amount = Number(tiers?.[0]?.rewardAmount ?? 0);
+        const maxUses = Number(tiers?.reduce((total, tier) => total + tier.users, 0) ?? 0);
+        const rawExpiresAt = String(input.expiresAt ?? '').trim();
+        const expiry = rawExpiresAt ? new Date(rawExpiresAt) : null;
+        const expiryTime = rawExpiresAt ? new Date(rawExpiresAt).getTime() : null;
+        if (!/^[A-Z0-9][A-Z0-9-]{3,31}$/.test(code) || !tiers || rawExpiresAt && (expiryTime === null || !Number.isFinite(expiryTime) || expiryTime <= Date.now())) {
+          return json({ error: 'Enter a 4-32 character code, at least one tier with positive users and reward, and an optional future expiry.' }, 400);
+        }
+        try {
+          const result = await pool.query('INSERT INTO gift_codes (id, code, amount, reward_tiers, max_uses, expires_at, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, code, amount, reward_tiers AS tiers, max_uses AS "maxUses", expires_at AS "expiresAt", is_active AS "isActive", created_at AS "createdAt"', [randomUUID(), code, amount, JSON.stringify(tiers), maxUses, expiry?.toISOString() ?? null, user.id, now()]);
+          await auditAdmin(user.id, null, 'GIFT_CODE_CREATED', null, { code, tiers, maxUses, expiresAt: expiry?.toISOString() ?? null });
+          return json({ code: { ...result.rows[0], tiers, redemptionCount: 0 } }, 201);
+        } catch (error) {
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') return json({ error: 'A gift code with that name already exists.' }, 409);
+          throw error;
+        }
+      }
+
+      const giftCodeDeactivate = path.match(/^\/api\/admin\/gift-codes\/([^/]+)\/deactivate$/);
+      if (giftCodeDeactivate && method === 'PATCH') {
+        if (user.role !== 'ADMIN') return json({ error: 'Admin authentication required.' }, 401);
+        const result = await pool.query('UPDATE gift_codes SET is_active = FALSE WHERE id = $1 RETURNING id', [decodeURIComponent(giftCodeDeactivate[1])]);
+        if (!result.rowCount) return json({ error: 'Gift code not found.' }, 404);
+        await auditAdmin(user.id, null, 'GIFT_CODE_DEACTIVATED', null, { id: decodeURIComponent(giftCodeDeactivate[1]) });
+        return json({ deactivated: true });
+      }
+
       if (path === '/api/admin/messages/private' && method === 'POST') {
         if (user.role !== 'ADMIN') return json({ error: 'Admin authentication required.' }, 401);
         const input = await readBody(request);
@@ -775,6 +945,7 @@ export default {
         const body = String(input.body ?? '').trim();
         if (!recipientId || !body) return json({ error: 'Recipient and message body are required.' }, 400);
         const msg = await pool.query('INSERT INTO user_messages (id, sender_user_id, recipient_user_id, kind, title, body, notification_type, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *', [randomUUID(), user.id, recipientId, 'PRIVATE', title, body, String(input.notificationType ?? 'INFO'), now()]);
+        await pushToUser(recipientId, { title: title || 'New message from Admin', body: body.slice(0, 180), url: '/messages', tag: `message:${msg.rows[0].id}` });
         return json({ message: msg.rows[0] }, 201);
       }
 
@@ -784,6 +955,7 @@ export default {
         const body = String(input.body ?? '').trim();
         if (!body) return json({ error: 'Broadcast message cannot be empty.' }, 400);
         const msg = await pool.query('INSERT INTO user_messages (id, sender_user_id, recipient_user_id, kind, title, body, notification_type, created_at) VALUES ($1, $2, NULL, $3, $4, $5, $6, $7) RETURNING *', [randomUUID(), user.id, 'BROADCAST', String(input.title ?? '').slice(0, 160), body, String(input.notificationType ?? 'INFO'), now()]);
+        await pushToAllUsers({ title: String(input.title ?? '').trim() || 'New announcement', body: body.slice(0, 180), url: '/messages', tag: `broadcast:${msg.rows[0].id}` });
         return json({ broadcast: msg.rows[0] }, 201);
       }
 
@@ -808,6 +980,8 @@ export default {
           if (!body) return json({ error: 'Reply cannot be empty.' }, 400);
           const result = await pool.query('INSERT INTO support_messages (id, conversation_id, author_id, body, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING *', [randomUUID(), conversationId, user.id, body, now()]);
           await pool.query('UPDATE support_conversations SET updated_at = $1 WHERE id = $2', [now(), conversationId]);
+          const conversation = await pool.query('SELECT user_id FROM support_conversations WHERE id = $1', [conversationId]);
+          if (conversation.rows[0]) await pushToUser(conversation.rows[0].user_id, { title: 'New support reply', body: body.slice(0, 180), url: '/support', tag: `support:${result.rows[0].id}` });
           return json({ message: result.rows[0] }, 201);
         }
       }
@@ -1141,6 +1315,11 @@ export default {
         return json({ account });
       }
 
+      if (path === '/api/wallet/transaction-statuses' && method === 'GET') {
+        const result = await pool.query('SELECT id, status FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 25', [user.id]);
+        return json({ transactions: result.rows });
+      }
+
       if (path === '/api/wallet/transactions' && method === 'GET') {
         const [rows, currency] = await Promise.all([pool.query('SELECT * FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [user.id]), currencyForUser(user.id)]);
         return json({ transactions: rows.rows.map((row) => transactionView(row, currency)) });
@@ -1248,6 +1427,7 @@ export default {
           deposit_receiving_country_code, deposit_receiving_currency_code, deposit_receiving_exchange_rate, deposit_payment_amount, crypto_network, crypto_amount, crypto_units_per_usdt, crypto_address, created_at, updated_at)
           VALUES ($1,$2,'DEPOSIT',$3,$4,'',$5,$6,$7,$8,$9,'PENDING','ADMIN_REVIEW',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19) RETURNING *`,
         [id, user.id, amount, senderName, phoneNumber, depositMethod.name, depositMethod.code, depositMethod.name, screenshotData, `DEP-${randomUUID()}`, receiving.countryCode, receiving.currencyCode, receivingRate, paymentAmount, isCrypto ? cryptoNetworkTrc20 : '', isCrypto ? paymentAmount : null, isCrypto ? receivingRate : null, isCrypto ? depositMethod.account_number : null, timestamp]);
+        await pushToUser(user.id, { title: 'Deposit request submitted', body: 'Your deposit is waiting for Admin review.', url: '/transactions', tag: `transaction:${id}:PENDING` });
         return json({ transaction: transactionView(inserted.rows[0], user) }, 201);
       }
 
@@ -1295,6 +1475,7 @@ export default {
           [id, user.id, amount, calculation.withdrawalFee, calculation.amountReceived, amount, commissionAmount, account.accountHolderName, account.phoneNumber, account.paymentMethod, `WDR-${randomUUID()}`, isCrypto ? cryptoNetworkTrc20 : '', cryptoWithdrawalAmount, isCrypto ? Number(user.unitsPerUsdt) : null, isCrypto ? account.walletAddress : null, timestamp]);
         });
         const created = await pool.query('SELECT * FROM wallet_transactions WHERE id = $1', [id]);
+        await pushToUser(user.id, { title: 'Withdrawal request submitted', body: 'Your withdrawal is waiting for Admin review.', url: '/transactions', tag: `transaction:${id}:PENDING` });
         return json({ transaction: transactionView(created.rows[0], user) }, 201);
       }
 
@@ -1337,6 +1518,7 @@ export default {
           const plan = await pool.query('SELECT * FROM plans WHERE name = $1', [outcome.replay.product_name]);
           return json({ purchase: outcome.replay, product: plan.rows[0] ? { ...planView(plan.rows[0]), displayPrice: localAmount(Number(plan.rows[0].price), user.unitsPerRwf), currencyCode: user.currencyCode } : null, balance: await balanceView(user.id), idempotentReplay: true });
         }
+        await pushToUser(user.id, { title: 'Product purchased', body: `Your purchase of ${outcome.productName} is complete.`, url: '/wallet', tag: `purchase:${outcome.created}` });
         const [purchase, plan] = await Promise.all([pool.query('SELECT * FROM product_purchases WHERE id = $1', [outcome.created]), pool.query('SELECT * FROM plans WHERE name = $1', [outcome.productName])]);
         const view = planView(plan.rows[0]);
         return json({ purchase: purchase.rows[0], product: { ...view, displayPrice: localAmount(view.price, user.unitsPerRwf), displayDailyIncome: localAmount(view.dailyIncome, user.unitsPerRwf), displayTotalIncome: localAmount(view.totalIncome, user.unitsPerRwf), currencyCode: user.currencyCode, countryCode: user.countryCode }, balance: await balanceView(user.id) }, 201);
@@ -1362,7 +1544,7 @@ export default {
           const found = await client.query('SELECT * FROM wallet_transactions WHERE id = $1 FOR UPDATE', [transactionId]);
           const row = found.rows[0];
           if (!row) return null;
-          if (row.status !== 'PENDING') return row;
+          if (row.status !== 'PENDING') return { transaction: row, changed: false };
           const timestamp = now();
           if (row.type === 'DEPOSIT') {
             const nextStatus = approve ? 'SUCCESS' : 'REJECTED';
@@ -1379,10 +1561,15 @@ export default {
             if (!approve) await client.query('UPDATE wallet_accounts SET reserved_balance = reserved_balance - $1, available_balance = available_balance + $1, updated_at = $2 WHERE user_id = $3 AND reserved_balance >= $1', [reserved, timestamp, row.user_id]);
             await walletAudit(client, transactionId, user.id, approve ? 'WITHDRAWAL_APPROVED' : 'WITHDRAWAL_REJECTED', 'PENDING', nextStatus, reason || null);
           }
-          return (await client.query('SELECT * FROM wallet_transactions WHERE id = $1', [transactionId])).rows[0];
+          return { transaction: (await client.query('SELECT * FROM wallet_transactions WHERE id = $1', [transactionId])).rows[0], changed: true };
         });
         if (!updated) return json({ error: 'Transaction not found.' }, 404);
-        return json({ transaction: transactionView(updated, await currencyForUser(updated.user_id)) });
+        if (updated.changed) {
+          const transaction = updated.transaction;
+          const decision = transaction.status === 'SUCCESS' ? 'approved' : 'rejected';
+          await pushToUser(transaction.user_id, { title: `${transaction.type === 'DEPOSIT' ? 'Deposit' : 'Withdrawal'} ${decision}`, body: `Your ${transaction.type.toLowerCase()} request was ${decision}.`, url: '/transactions', tag: `transaction:${transaction.id}:${transaction.status}` });
+        }
+        return json({ transaction: transactionView(updated.transaction, await currencyForUser(updated.transaction.user_id)) });
       }
 
       const adminBalanceRoute = path.match(/^\/api\/admin\/users\/([^/]+)\/balance$/);

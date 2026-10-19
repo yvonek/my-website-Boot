@@ -1,13 +1,30 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import App from '../App';
+import App, { hasNewTransactionDecision } from '../App';
+import type { TransactionStatus, WalletTransactionStatus } from '../api/types';
 import { AdminUsersPage } from '../pages/AdminUsersPage';
 import { LoginPage } from '../pages/AuthPages';
+import { HomeDashboard } from '../pages/HomeDashboard';
 import { PlanCard } from '../components/PlanCard';
 import { PlansPage } from '../pages/PlansPage';
 import { WalletPage } from '../pages/WalletPage';
+import { api } from '../api';
+import * as notifications from '../notifications';
 
-afterEach(() => vi.unstubAllGlobals());
+describe('transaction decision notifications', () => {
+  const transaction = (id: string, status: TransactionStatus) => ({ id, status }) satisfies WalletTransactionStatus;
+
+  it('notifies for a new transaction or a previously pending transaction that is decided', () => {
+    expect(hasNewTransactionDecision(null, [transaction('deposit-1', 'SUCCESS')])).toBe(false);
+    expect(hasNewTransactionDecision(new Map(), [transaction('withdraw-1', 'PENDING')])).toBe(true);
+    expect(hasNewTransactionDecision(new Map([['deposit-1', 'PENDING']]), [transaction('deposit-1', 'SUCCESS')])).toBe(true);
+    expect(hasNewTransactionDecision(new Map([['withdraw-1', 'PENDING']]), [transaction('withdraw-1', 'REJECTED')])).toBe(true);
+    expect(hasNewTransactionDecision(new Map([['withdraw-1', 'PENDING']]), [transaction('withdraw-1', 'PENDING')])).toBe(false);
+    expect(hasNewTransactionDecision(new Map([['deposit-1', 'SUCCESS']]), [transaction('deposit-1', 'APPROVED')])).toBe(false);
+  });
+});
+
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.removeItem('notification-sound'); });
 
 function mockResponse(body: unknown, status = 200) {
   const serialized = JSON.stringify(body);
@@ -44,6 +61,32 @@ describe('dashboard', () => {
     expect(fetchRequest.mock.calls.map(([input]) => String(input))).toContain('/api/dashboard');
     expect(fetchRequest.mock.calls.filter(([input]) => String(input) === '/api/dashboard')).toHaveLength(1);
   }, 20000);
+
+  it('redeems a gift code from the wallet actions and refreshes the balance', async () => {
+    const fetchRequest = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), window.location.href).pathname;
+      const body = path === '/api/wallet/balance'
+        ? { userId: 'user-1', availableBalance: 0, reservedBalance: 0, paymentMode: 'admin-review' }
+        : path === '/api/wallet/products'
+          ? { products: [] }
+          : path === '/api/wallet/daily-checkin'
+            ? { enabled: false, rewardAmount: 0, claimed: false, claimedAt: null }
+            : path === '/api/wallet/gift-codes/redeem' && init?.method === 'POST'
+              ? { redeemed: true, amount: 5000, displayAmount: 5000, currencyCode: 'RWF', balance: { userId: 'user-1', availableBalance: 5000, reservedBalance: 0, paymentMode: 'admin-review' } }
+              : {};
+      return mockResponse(body);
+    });
+    vi.stubGlobal('fetch', fetchRequest);
+
+    render(<HomeDashboard data={{ metrics: [], plans: [], referrals: [], tools: [] }} state="data" onRetry={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Gift Code' }));
+    fireEvent.change(screen.getByLabelText('Gift code'), { target: { value: 'WELCOME-5000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Redeem' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Gift code received 5,000 RWF.');
+    expect(await screen.findByText('5,000 RWF')).toBeInTheDocument();
+    expect(fetchRequest).toHaveBeenCalledWith('/api/wallet/gift-codes/redeem', expect.objectContaining({ method: 'POST', body: JSON.stringify({ code: 'WELCOME-5000' }) }));
+  });
 
   it('requires a session before rendering the protected Withdraw page', async () => {
     window.history.replaceState({}, '', '/withdraw');
@@ -202,6 +245,8 @@ describe('wallet page', () => {
     render(<WalletPage data={null} state="data" onRetry={() => undefined} />);
 
     expect(await screen.findByText('Transaction history')).toBeInTheDocument();
+    expect(screen.getByText('Gift Code')).toBeInTheDocument();
+    expect(screen.getByLabelText('Gift code')).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Filter transaction history' })).not.toBeInTheDocument();
     expect(screen.getByText('LOCKED · Purchase a product to unlock')).toBeInTheDocument();
     expect(await screen.findByText('25,000 RWF')).toBeInTheDocument();
@@ -248,6 +293,21 @@ describe('Telegram group invitation', () => {
 });
 
 describe('mobile product purchase', () => {
+  it('plays the enabled notification sound when purchase or withdrawal requests fail', async () => {
+    localStorage.setItem('notification-sound', 'on');
+    const sound = vi.spyOn(notifications, 'playNotificationSound');
+    vi.stubGlobal('fetch', vi.fn(async () => mockResponse({ error: 'Insufficient available balance for this product.' }, 400)));
+
+    await expect(api.createPurchase({ productId: 'starter-plan', idempotencyKey: 'purchase-test-001' })).rejects.toThrow('Insufficient available balance for this product.');
+    await expect(api.previewWithdrawal({ amount: 1000, phoneNumber: '', paymentMethod: 'MTN_MOMO', receiverName: '' })).rejects.toThrow('Insufficient available balance for this product.');
+    await expect(api.getBalance()).rejects.toThrow('Insufficient available balance for this product.');
+
+    expect(sound).toHaveBeenCalledTimes(2);
+    vi.stubGlobal('fetch', vi.fn(async () => mockResponse({ purchase: { id: 'purchase-1' } })));
+    await api.createPurchase({ productId: 'starter-plan', idempotencyKey: 'purchase-test-002' });
+    expect(sound).toHaveBeenCalledTimes(3);
+  });
+
   it('sends a purchase request when randomUUID is unavailable on a LAN origin', async () => {
     const plan = { id: 'mobile-plan', name: 'Mobile Plan', description: '', imageData: null, price: 20000, deposited: '20000', incomePerDay: 1000, dailyIncome: 1000, totalIncome: 30000, purchaseBonus: 0, totalSlots: 10, soldSlots: 0, remainingSlots: 10, progressPercent: 0, soldOut: false, durationDays: 30, termDays: 30, term: '30 days', status: 'Active' as const, note: '' };
     const fetchRequest = vi.fn(async () => mockResponse({ purchase: { id: 'purchase-1', status: 'COMPLETED', reference: 'PUR-1' }, product: plan, balance: { userId: 'user-1', availableBalance: 0, reservedBalance: 0, paymentMode: 'admin-review' } }));

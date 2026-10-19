@@ -7,6 +7,7 @@ import type { Plan } from '../api/types';
 import { api } from '../api';
 import { formatCurrencyAmount } from '../api/money';
 import type { DailyCheckinStatus, DashboardData, WalletBalance } from '../api/types';
+import { GiftCodeRedeemer } from '../components/GiftCodeRedeemer';
 import { PlanCard } from '../components/PlanCard';
 
 const tomatoSlides = [
@@ -82,7 +83,7 @@ export function HomeDashboard({ data, state, onRetry }: { data: DashboardData | 
       <div className="home-balance-card__top"><span>Wallet balance</span><button type="button" aria-label={balanceVisible ? 'Hide balance' : 'Show balance'} onClick={() => setBalanceVisible((visible) => !visible)}>{balanceVisible ? <EyeOffRegular /> : <EyeRegular />}</button></div>
       <strong className="home-balance-card__amount">{balanceText}</strong>
       <Text className="home-balance-card__trend">{balanceDetail}</Text>
-      <div className={checkin?.enabled ? 'home-balance-card__actions home-balance-card__actions--checkin' : 'home-balance-card__actions'}><a href="/deposit" className="home-primary-action"><ArrowDownRegular /> Deposit</a><a href="/withdraw" className="home-secondary-action"><ArrowUpRegular /> Withdraw</a>{checkin?.enabled && <button className="home-checkin-action" type="button" disabled={checkin.claimed || checkinBusy} onClick={() => void claimCheckin()}><StarRegular />{checkin.claimed ? 'Checked in' : checkinBusy ? 'Checking...' : `Check in · ${formatCurrencyAmount(checkin.displayRewardAmount ?? checkin.rewardAmount, checkin.currencyCode ?? currencyCode)}`}</button>}</div>
+      <div className={checkin?.enabled ? 'home-balance-card__actions home-balance-card__actions--checkin home-balance-card__actions--gift' : 'home-balance-card__actions home-balance-card__actions--gift'}><a href="/deposit" className="home-primary-action"><ArrowDownRegular /> Deposit</a><a href="/withdraw" className="home-secondary-action"><ArrowUpRegular /> Withdraw</a><GiftCodeRedeemer mode="action" onRedeemed={(result) => setBalance(result.balance)} />{checkin?.enabled && <button className="home-checkin-action" type="button" aria-label={checkin.claimed ? 'Checked in today' : `Check in for ${formatCurrencyAmount(checkin.displayRewardAmount ?? checkin.rewardAmount, checkin.currencyCode ?? currencyCode)}`} title={checkin.claimed ? 'Checked in today' : `Check in for ${formatCurrencyAmount(checkin.displayRewardAmount ?? checkin.rewardAmount, checkin.currencyCode ?? currencyCode)}`} disabled={checkin.claimed || checkinBusy} onClick={() => void claimCheckin()}><StarRegular /><span className="home-checkin-action__full">{checkin.claimed ? 'Checked in' : checkinBusy ? 'Checking...' : `Check in · ${formatCurrencyAmount(checkin.displayRewardAmount ?? checkin.rewardAmount, checkin.currencyCode ?? currencyCode)}`}</span><span className="home-checkin-action__compact">{checkin.claimed ? 'Checked' : checkinBusy ? 'Wait' : 'Check-in'}</span></button>}</div>
       {checkinMessage && <span className="home-checkin-message" role="status">{checkinMessage}</span>}
     </section>
 

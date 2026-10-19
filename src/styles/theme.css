@@ -450,9 +450,17 @@ button { font-family: inherit; }
 .daily-checkin .fui-Button--primary:hover:not(:disabled) { background: #ffd15a; }
 .daily-checkin .fui-Button--primary:disabled { color: #695f48; background: #eee4c7; }
 .daily-checkin__message { grid-column: 1 / -1; }
+.wallet-gift-code { display: grid; gap: 10px; padding: 13px 14px; border: 1px solid #d5dce3; border-radius: 12px; color: #202630; background: #fff; box-shadow: 0 4px 14px rgba(25, 32, 42, .05); }
+.wallet-gift-code > div:first-child { display: grid; gap: 3px; }
+.wallet-gift-code > div:first-child strong { color: #202630; font-size: 14px; }
+.wallet-gift-code .muted { color: #59636f !important; font-size: 12px; }
+.wallet-gift-code .gift-code-redemption-message { color: #365a3d; }
 .daily-checkin-skeleton { height: 58px; border: 1px solid #e0e4e8; border-radius: 12px; background: rgba(255, 255, 255, .78); }
 .daily-checkin-admin { display: grid; grid-template-columns: auto minmax(160px, 260px) auto; align-items: end; gap: 12px; }
 .daily-checkin-admin .deposit-admin-status { align-self: center; }
+.daily-checkin-tiers { display: grid; gap: 8px; }
+.daily-checkin-tier { display: grid; grid-template-columns: minmax(120px, .8fr) repeat(2, minmax(150px, 1fr)) auto; align-items: end; gap: 10px; padding: 10px 0; border-top: 1px solid rgba(120, 175, 179, .22); }
+.daily-checkin-tier > .fui-Text { align-self: center; }
 .admin-settings-page, .admin-transactions-page, .support-page, .plans-page, .team-page-premium { gap: 14px; }
 .support-grid, .plan-grid, .admin-transaction-list { gap: 8px; }
 .support-card, .settings-card, .admin-auth-card { padding: 15px; }
@@ -465,6 +473,15 @@ button { font-family: inherit; }
   .wallet-page .wallet-product { padding: 10px; }
   .daily-checkin { gap: 7px; padding: 10px; }
   .daily-checkin-admin { grid-template-columns: 1fr; align-items: stretch; gap: 8px; }
+  .daily-checkin-tier { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .daily-checkin-tier > .fui-Text { grid-column: 1 / -1; }
+  .daily-checkin-tier > .fui-Button { grid-column: 1 / -1; }
+  .gift-code-admin-form { grid-template-columns: 1fr; align-items: stretch; gap: 8px; }
+  .gift-code-tier-row { grid-template-columns: 1fr 1fr; align-items: stretch; gap: 8px; }
+  .gift-code-tier-row > .fui-Text,
+  .gift-code-tier-row > .fui-Button { grid-column: 1 / -1; }
+  .gift-code-admin-row { align-items: flex-start; }
+  .gift-code-redemption-form { grid-template-columns: 1fr; align-items: stretch; }
   .admin-settings-page, .admin-transactions-page, .support-page, .plans-page, .team-page-premium { gap: 12px; }
 }
 .support-card, .chat-card { border-color: #e0e4e8 !important; border-radius: 14px; color: #202630 !important; background: #fff !important; box-shadow: 0 8px 22px rgba(25, 32, 42, .06); }
@@ -899,11 +916,28 @@ button { font-family: inherit; }
 .home-balance-card .home-primary-action,
 .home-balance-card .home-secondary-action { min-height: 38px; }
 .home-balance-card__actions--checkin { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.home-balance-card__actions--gift { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.home-gift-code-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 38px; padding: 0 10px; border: 1px solid #d6a933; border-radius: 12px; color: #352700; background: #f1bd3f; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.home-gift-code-action:hover { border-color: #dfb43f; background: #ffd15a; }
+.home-gift-code-action svg { flex: 0 0 auto; }
+.home-gift-code-form { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 2px; }
+.gift-code-redemption-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.gift-code-redemption-message { grid-column: 1 / -1; color: #fff; font-size: 12px; font-weight: 650; }
 .home-checkin-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 38px; padding: 0 10px; border: 1px solid #d6a933; border-radius: 12px; color: #352700; background: #f1bd3f; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
 .home-checkin-action:hover:not(:disabled) { border-color: #dfb43f; background: #ffd15a; }
 .home-checkin-action:disabled { color: #695f48; background: #eee4c7; cursor: default; }
 .home-checkin-action svg { flex: 0 0 auto; }
+.home-checkin-action__compact { display: none; }
 .home-checkin-message { display: block; margin-top: 6px; color: #4d5662; font-size: 12px; font-weight: 600; }
+.gift-code-admin-form { display: grid; grid-template-columns: minmax(170px, .8fr) minmax(330px, 2fr) minmax(190px, 1fr) auto; align-items: end; gap: 10px; }
+.gift-code-tier-list { display: grid; gap: 8px; min-width: 0; }
+.gift-code-tier-row { display: grid; grid-template-columns: minmax(48px, auto) minmax(90px, .8fr) minmax(140px, 1.2fr) auto; align-items: end; gap: 8px; padding: 8px 0; border-top: 1px solid rgba(120, 175, 179, .22); }
+.gift-code-tier-row > .fui-Text { align-self: center; }
+.gift-code-admin-list { display: grid; gap: 6px; }
+.gift-code-admin-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid rgba(120, 175, 179, .22); }
+.gift-code-admin-row > div { display: grid; gap: 3px; min-width: 0; }
+.gift-code-admin-row strong { overflow-wrap: anywhere; }
+.gift-code-admin-row span { color: #a9bec2; font-size: 12px; }
 @media (max-width: 600px) {
   .home-dashboard { gap: 16px; }
   .home-balance-card { padding: 13px 15px 12px; border-radius: 17px; }
@@ -914,6 +948,17 @@ button { font-family: inherit; }
   .home-balance-card__actions { margin-top: 9px; }
   .home-balance-card .home-primary-action,
   .home-balance-card .home-secondary-action { min-height: 36px; padding-inline: 13px; }
+  .home-balance-card__actions--gift { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+  .home-balance-card__actions--gift .home-primary-action,
+  .home-balance-card__actions--gift .home-secondary-action,
+  .home-balance-card__actions--gift .home-gift-code-action,
+  .home-balance-card__actions--gift .home-checkin-action { min-width: 0; min-height: 34px; gap: 0; padding-inline: 2px; font-size: 10px; line-height: 1; white-space: nowrap; }
+  .home-balance-card__actions--gift .home-primary-action svg,
+  .home-balance-card__actions--gift .home-secondary-action svg,
+  .home-gift-code-action svg,
+  .home-checkin-action svg { display: none; }
+  .home-checkin-action__full { display: none; }
+  .home-checkin-action__compact { display: inline; }
   .home-balance-card__actions--checkin { gap: 5px; }
   .home-balance-card__actions--checkin .home-primary-action,
   .home-balance-card__actions--checkin .home-secondary-action,

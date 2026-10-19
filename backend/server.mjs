@@ -144,6 +144,25 @@ function featureForPath(path, method) {
 }
 function newReferralCode() { let code; do { code = randomBytes(5).toString('hex').toUpperCase(); } while (database.prepare('SELECT id FROM users WHERE referral_code = ?').get(code)); return code; }
 function setting(key) { return database.prepare('SELECT value FROM support_settings WHERE key = ?').get(key)?.value ?? ''; }
+function dailyCheckinReward() { return Math.max(0, Number(setting('daily_checkin_reward_amount')) || 0); }
+function normalizeGiftCodeTiers(input, fallbackAmount, fallbackMaxUses) {
+  let tiers = input;
+  if (typeof tiers === 'string') { try { tiers = JSON.parse(tiers); } catch { return null; } }
+  if (tiers === undefined) tiers = [{ users: fallbackMaxUses, rewardAmount: fallbackAmount }];
+  if (!Array.isArray(tiers) || tiers.length < 1 || tiers.length > 20) return null;
+  const parsed = tiers.map((tier) => ({ users: Number(tier?.users), rewardAmount: Number(tier?.rewardAmount) }));
+  const maxUses = parsed.reduce((total, tier) => total + tier.users, 0);
+  if (parsed.some((tier) => !Number.isSafeInteger(tier.users) || tier.users <= 0 || !Number.isSafeInteger(tier.rewardAmount) || tier.rewardAmount <= 0) || !Number.isSafeInteger(maxUses) || maxUses > 100000) return null;
+  return parsed;
+}
+function giftCodeTierForUse(redemptionCount, tiers) {
+  let remaining = redemptionCount;
+  for (const tier of tiers) {
+    if (remaining < tier.users) return tier;
+    remaining -= tier.users;
+  }
+  return null;
+}
 function platformSettings() {
   const read = (key) => database.prepare('SELECT value FROM support_settings WHERE key = ?').get(key)?.value;
   const legacyPercent = Math.max(0, Number(process.env.WITHDRAWAL_FEE_PERCENT ?? 0));
@@ -393,16 +412,17 @@ async function handle(request, response) {
   }
   if (path === '/api/admin/daily-checkin' && method === 'GET') {
     if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
-    sendJson(response, 200, { enabled: setting('daily_checkin_enabled') === '1', rewardAmount: Number(setting('daily_checkin_reward_amount')) || 0 }); return;
+    sendJson(response, 200, { enabled: setting('daily_checkin_enabled') === '1', rewardAmount: dailyCheckinReward() }); return;
   }
   if (path === '/api/admin/daily-checkin' && method === 'PUT') {
     if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
     const input = await readBody(request);
     const enabled = input.enabled === true;
     const rewardAmount = Number(input.rewardAmount);
-    if (!Number.isSafeInteger(rewardAmount) || rewardAmount < 0 || enabled && rewardAmount <= 0) { sendJson(response, 400, { error: 'Enter a whole-number reward above zero to enable daily check-in.' }); return; }
+    if (!Number.isSafeInteger(rewardAmount) || rewardAmount < 0 || enabled && rewardAmount <= 0) { sendJson(response, 400, { error: 'Enter one positive whole-number reward while daily check-in is enabled.' }); return; }
     database.prepare('INSERT INTO support_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at').run('daily_checkin_enabled', enabled ? '1' : '0', now());
     database.prepare('INSERT INTO support_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at').run('daily_checkin_reward_amount', String(rewardAmount), now());
+    database.prepare('DELETE FROM support_settings WHERE key = ?').run('daily_checkin_reward_tiers');
     sendJson(response, 200, { enabled, rewardAmount }); return;
   }
   if (path === '/api/admin/members/role' && method === 'PUT') {
@@ -445,6 +465,7 @@ async function handle(request, response) {
     return account ? { ...account, availableBalance: walletBalanceView(userId).availableBalance } : account;
   };
   if (path === '/api/user/account-state' && method === 'GET') { sendJson(response, 200, { accountStatus: user.accountStatus, allowDeposits: user.allowDeposits, allowWithdrawals: user.allowWithdrawals, permissions: user.permissions, countryCode: user.countryCode, currencyCode: user.currencyCode, exchangeRate: user.unitsPerRwf }); return; }
+  if (path === '/api/user/push/config' && method === 'GET') { sendJson(response, 200, { enabled: false, publicKey: null }); return; }
   if (path === '/api/admin/countries' && method === 'GET') {
     if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
     const countries = supportedCountries.map((supported) => {
@@ -636,6 +657,49 @@ async function handle(request, response) {
     database.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(targetId);
     auditAdmin(admin?.id ?? null, targetId, 'PASSWORD_RESET', null, { sessionsInvalidated: true });
     sendJson(response, 200, { temporaryPassword }); return;
+  }
+  if (path === '/api/admin/gift-codes' && method === 'GET') {
+    const admin = adminUser(request);
+    if (!admin) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const codes = database.prepare(`SELECT c.id, c.code, c.amount, c.reward_tiers AS tiers, c.max_uses AS maxUses, c.expires_at AS expiresAt,
+      c.is_active AS isActive, c.created_at AS createdAt, count(r.id) AS redemptionCount
+      FROM gift_codes c LEFT JOIN gift_code_redemptions r ON r.code_id = c.id
+      GROUP BY c.id ORDER BY c.created_at DESC`).all();
+    sendJson(response, 200, { codes: codes.map((code) => ({ ...code, tiers: JSON.parse(code.tiers || '[]'), isActive: Boolean(code.isActive) })) }); return;
+  }
+  if (path === '/api/admin/gift-codes' && method === 'POST') {
+    const admin = adminUser(request);
+    if (!admin) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const input = await readBody(request);
+    const code = String(input.code ?? '').trim().toUpperCase();
+    const legacyAmount = amountOf(input.amount);
+    const legacyMaxUses = Number(input.maxUses);
+    const tiers = normalizeGiftCodeTiers(input.tiers, legacyAmount, legacyMaxUses);
+    const amount = tiers?.[0]?.rewardAmount;
+    const maxUses = tiers?.reduce((total, tier) => total + tier.users, 0);
+    const rawExpiresAt = String(input.expiresAt ?? '').trim();
+    const expiry = rawExpiresAt ? new Date(rawExpiresAt) : null;
+    if (!/^[A-Z0-9][A-Z0-9-]{3,31}$/.test(code) || !tiers || rawExpiresAt && (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now())) {
+      sendJson(response, 400, { error: 'Enter a 4-32 character code, at least one tier with positive users and reward, and an optional future expiry.' }); return;
+    }
+    const id = randomUUID();
+    try {
+      database.prepare('INSERT INTO gift_codes (id, code, amount, reward_tiers, max_uses, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, code, amount, JSON.stringify(tiers), maxUses, expiry?.toISOString() ?? null, admin.id);
+    } catch (error) {
+      if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed/.test(error.message)) { sendJson(response, 409, { error: 'A gift code with that name already exists.' }); return; }
+      throw error;
+    }
+    auditAdmin(admin.id, null, 'GIFT_CODE_CREATED', null, { code, tiers, maxUses, expiresAt: expiry?.toISOString() ?? null });
+    sendJson(response, 201, { code: { id, code, amount, tiers, maxUses, expiresAt: expiry?.toISOString() ?? null, isActive: true, redemptionCount: 0 } }); return;
+  }
+  const giftCodeDeactivate = path.match(/^\/api\/admin\/gift-codes\/([^/]+)\/deactivate$/);
+  if (giftCodeDeactivate && method === 'PATCH') {
+    const admin = adminUser(request);
+    if (!admin) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const result = database.prepare('UPDATE gift_codes SET is_active = 0 WHERE id = ?').run(decodeURIComponent(giftCodeDeactivate[1]));
+    if (!result.changes) { sendJson(response, 404, { error: 'Gift code not found.' }); return; }
+    auditAdmin(admin.id, null, 'GIFT_CODE_DEACTIVATED', null, { id: decodeURIComponent(giftCodeDeactivate[1]) });
+    sendJson(response, 200, { deactivated: true }); return;
   }
   if (path === '/api/admin/messages/private' && method === 'POST') {
     const admin = adminUser(request);
@@ -892,26 +956,58 @@ async function handle(request, response) {
     }
     sendJson(response, 200, { products }); return;
   }
+  if (path === '/api/wallet/gift-codes/redeem' && method === 'POST') {
+    const input = await readBody(request);
+    const code = String(input.code ?? '').trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9-]{3,31}$/.test(code)) { sendJson(response, 400, { error: 'Enter a valid gift code.' }); return; }
+    let gift;
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      gift = database.prepare('SELECT id, amount, reward_tiers AS tiers, max_uses AS maxUses, expires_at AS expiresAt, is_active AS isActive FROM gift_codes WHERE code = ? COLLATE NOCASE').get(code);
+      if (!gift) throw Object.assign(new Error('Gift code not found.'), { statusCode: 404 });
+      if (!gift.isActive || gift.expiresAt && gift.expiresAt <= now()) throw Object.assign(new Error('This gift code is no longer active.'), { statusCode: 410 });
+      if (database.prepare('SELECT 1 FROM gift_code_redemptions WHERE code_id = ? AND user_id = ?').get(gift.id, user.id)) throw Object.assign(new Error('You have already redeemed this gift code.'), { statusCode: 409 });
+      const uses = database.prepare('SELECT count(*) AS count FROM gift_code_redemptions WHERE code_id = ?').get(gift.id).count;
+      if (uses >= gift.maxUses) throw Object.assign(new Error('This gift code has reached its redemption limit.'), { statusCode: 409 });
+      const tiers = normalizeGiftCodeTiers(gift.tiers, gift.amount, gift.maxUses);
+      const tier = tiers && giftCodeTierForUse(uses, tiers);
+      const rewardAmount = Number(tier?.rewardAmount ?? 0);
+      if (!rewardAmount) throw Object.assign(new Error('This gift code has no reward remaining.'), { statusCode: 409 });
+      database.prepare('INSERT INTO gift_code_redemptions (id, code_id, user_id, reward_amount) VALUES (?, ?, ?, ?)').run(randomUUID(), gift.id, user.id, rewardAmount);
+      database.prepare('UPDATE wallet_accounts SET available_balance = available_balance + ?, updated_at = ? WHERE user_id = ?').run(rewardAmount, now(), user.id);
+      gift.amount = rewardAmount;
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      if (error.statusCode) { sendJson(response, error.statusCode, { error: error.message }); return; }
+      throw error;
+    }
+    const currency = currencyForUser(user.id);
+    sendJson(response, 200, { redeemed: true, amount: gift.amount, displayAmount: localAmount(gift.amount, currency), currencyCode: currency.currencyCode, balance: walletBalanceView(user.id) }); return;
+  }
   if (path === '/api/wallet/daily-checkin' && method === 'GET') {
     const checkinDate = new Date().toISOString().slice(0, 10);
-    const enabled = setting('daily_checkin_enabled') === '1';
-    const rewardAmount = Number(setting('daily_checkin_reward_amount')) || 0;
+    const configured = setting('daily_checkin_enabled') === '1';
     const claim = database.prepare('SELECT reward_amount AS rewardAmount, created_at AS claimedAt FROM daily_checkins WHERE user_id = ? AND checkin_date = ?').get(user.id, checkinDate);
+    const rewardAmount = Number(claim?.rewardAmount ?? dailyCheckinReward());
     const currency = currencyForUser(user.id);
-    sendJson(response, 200, { enabled, rewardAmount, displayRewardAmount: localAmount(rewardAmount, currency), currencyCode: currency.currencyCode, claimed: Boolean(claim), claimedAt: claim?.claimedAt ?? null }); return;
+    sendJson(response, 200, { enabled: configured && rewardAmount > 0, rewardAmount, displayRewardAmount: localAmount(rewardAmount, currency), currencyCode: currency.currencyCode, claimed: Boolean(claim), claimedAt: claim?.claimedAt ?? null }); return;
   }
   if (path === '/api/wallet/daily-checkin' && method === 'POST') {
     const checkinDate = new Date().toISOString().slice(0, 10);
     const enabled = setting('daily_checkin_enabled') === '1';
-    const rewardAmount = Number(setting('daily_checkin_reward_amount')) || 0;
-    if (!enabled || !Number.isSafeInteger(rewardAmount) || rewardAmount <= 0) { sendJson(response, 403, { error: 'Daily check-in is currently unavailable.' }); return; }
+    const rewardAmount = dailyCheckinReward();
+    if (!enabled || rewardAmount <= 0) { sendJson(response, 403, { error: 'Daily check-in is currently unavailable.' }); return; }
     database.exec('BEGIN IMMEDIATE');
     try {
+      const existingClaim = database.prepare('SELECT reward_amount FROM daily_checkins WHERE user_id = ? AND checkin_date = ?').get(user.id, checkinDate);
+      if (existingClaim) throw Object.assign(new Error('Daily check-in has already been claimed today.'), { statusCode: 409 });
       database.prepare('INSERT INTO daily_checkins (user_id, checkin_date, reward_amount) VALUES (?, ?, ?)').run(user.id, checkinDate, rewardAmount);
       database.prepare('UPDATE wallet_accounts SET available_balance = available_balance + ?, updated_at = ? WHERE user_id = ?').run(rewardAmount, now(), user.id);
       database.exec('COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');
+      if (error.statusCode) { sendJson(response, error.statusCode, { error: error.message }); return; }
       if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed: daily_checkins\.user_id, daily_checkins\.checkin_date/.test(error.message)) { sendJson(response, 409, { error: 'Daily check-in has already been claimed today.' }); return; }
       throw error;
     }
@@ -1013,6 +1109,7 @@ async function handle(request, response) {
     database.prepare("INSERT INTO withdrawal_accounts (user_id, account_holder_name, phone_number, wallet_address, payment_method, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET account_holder_name = excluded.account_holder_name, phone_number = excluded.phone_number, wallet_address = excluded.wallet_address, payment_method = excluded.payment_method, updated_at = excluded.updated_at").run(demoUserId, accountHolderName, isCrypto ? '' : phoneNumber, isCrypto ? walletAddress : '', paymentMethod, now());
     sendJson(response, 200, { account: withdrawalAccountFor(demoUserId) }); return;
   }
+  if (path === '/api/wallet/transaction-statuses' && method === 'GET') { const transactions = database.prepare('SELECT id, status FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 25').all(user.id); sendJson(response, 200, { transactions }); return; }
   if (path === '/api/wallet/transactions' && method === 'GET') { const rows = database.prepare('SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(demoUserId); sendJson(response, 200, { transactions: rows.map(transactionView) }); return; }
   if (path === '/api/team' && method === 'GET') {
     const levels = database.prepare(`WITH RECURSIVE team(userId, sponsorUserId, level, joinedAt) AS (

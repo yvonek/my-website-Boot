@@ -48,6 +48,7 @@ export interface Plan {
 
 export interface WalletProduct { id: string; name: string; amount: number; displayAmount?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; status: 'COMPLETED'; reference: string; purchasedAt: string; dailyIncome: number; displayDailyIncome: number; durationDays: number; incomePaidDays: number; nextIncomeAt: string | null; }
 export interface UserMessage { id: string; kind: 'PRIVATE' | 'BROADCAST'; title: string; body: string; notificationType: 'INFO' | 'SUCCESS' | 'WARNING'; createdAt: string; senderName: string | null; isRead: boolean; }
+export interface UserPushSubscription { endpoint: string; expirationTime: number | null; keys: { p256dh: string; auth: string }; }
 
 export interface Referral {
   person: string;
@@ -75,6 +76,7 @@ export interface DashboardData {
 
 export interface DailyCheckinStatus { enabled: boolean; rewardAmount: number; displayRewardAmount?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; claimed: boolean; claimedAt: string | null; }
 export interface DailyCheckinClaim { claimed: true; rewardAmount: number; displayRewardAmount?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; checkinDate: string; balance: WalletBalance; }
+export interface GiftCodeRedemption { redeemed: true; amount: number; displayAmount: number; currencyCode: CurrencyCode; balance: WalletBalance; }
 
 export interface ApiClient {
   getCurrentUser(): Promise<{ user: AuthUser | null }>;
@@ -93,6 +95,7 @@ export interface ApiClient {
   markUserMessageRead(messageId: string): Promise<{ read: boolean }>;
   getDailyCheckin(): Promise<DailyCheckinStatus>;
   claimDailyCheckin(): Promise<DailyCheckinClaim>;
+  redeemGiftCode(code: string): Promise<GiftCodeRedemption>;
   getDepositMethods(): Promise<{ methods: DepositPaymentMethod[] }>;
   createDeposit(input: DepositRequest): Promise<WalletTransactionResponse>;
   createWithdrawal(input: WalletRequest): Promise<WalletTransactionResponse>;
@@ -100,6 +103,10 @@ export interface ApiClient {
   getWithdrawalAccount(): Promise<{ account: WithdrawalAccount | null }>;
   saveWithdrawalAccount(input: WithdrawalAccountInput): Promise<{ account: WithdrawalAccount }>;
   getTransactions(): Promise<{ transactions: WalletTransaction[] }>;
+  getTransactionStatuses(): Promise<{ transactions: WalletTransactionStatus[] }>;
+  getPushConfiguration(): Promise<{ enabled: boolean; publicKey: string | null }>;
+  savePushSubscription(subscription: UserPushSubscription): Promise<{ saved: boolean }>;
+  removePushSubscription(endpoint: string): Promise<{ removed: boolean }>;
   getPaymentMethods(type: 'deposit' | 'withdrawal'): Promise<{ methods: { code: PaymentMethod; name: string }[] }>;
   createPurchase(input: { productId: string; idempotencyKey: string }): Promise<{ purchase: { id: string; status: string; reference: string }; product: Plan; balance: WalletBalance; idempotentReplay?: boolean }>;
 }
@@ -117,6 +124,7 @@ export interface WithdrawalPreview { channel: string; phoneNumber: string; recei
 export interface WithdrawalAccount { accountHolderName: string; phoneNumber: string; walletAddress?: string; paymentMethod: PaymentMethod; createdAt: string; updatedAt: string; }
 export interface WithdrawalAccountInput { accountHolderName: string; phoneNumber: string; walletAddress?: string; paymentMethod: PaymentMethod; }
 export interface WalletTransaction { id: string; userId: string; userName?: string; type: TransactionType; amount: number; displayAmount?: number; withdrawalFee: number; displayFee?: number; amountReceived: number; displayAmountReceived?: number; countryCode?: 'RW' | 'BI' | 'UG'; currencyCode?: 'RWF' | 'BIF' | 'UGX'; exchangeRate?: number; depositReceivingCountryCode?: 'RW' | 'BI' | 'UG' | null; depositReceivingCurrencyCode?: 'RWF' | 'BIF' | 'UGX' | null; depositReceivingExchangeRate?: number | null; depositPaymentAmount?: number | null; cryptoNetwork?: string; cryptoAmount?: number | null; cryptoUnitsPerUsdt?: number | null; cryptoAddress?: string | null; senderName: string; receiverName: string; phoneNumber: string; paymentMethod: string; depositMethodId?: string | null; depositMethodName?: string | null; screenshotData?: string | null; status: TransactionStatus; provider: string; providerReference: string; internalReference: string; failureReason: string | null; rejectionReason: string | null; createdAt: string; updatedAt: string; completedAt: string | null; }
+export type WalletTransactionStatus = Pick<WalletTransaction, 'id' | 'status'>;
 export interface WalletTransactionResponse { transaction: WalletTransaction; }
 export interface SupportSettings { telegramUrl: string; telegramPopupMessage: string; supportEmail: string; liveChatEnabled: boolean; }
 export interface SupportConversation { id: string; user_id: string; status: 'OPEN' | 'RESOLVED'; }

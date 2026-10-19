@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { TransactionHistory } from '../components/TransactionHistory';
 import { api } from '../api';
 import { formatCurrencyAmount, isValidCountryPhone, isValidTrc20Address } from '../api/money';
+import { playNotificationSound } from '../notifications';
 import type { PaymentMethod, WalletBalance, WalletTransaction, WithdrawalAccount, WithdrawalPreview } from '../api/types';
 
 export function WithdrawPage() {
@@ -48,8 +49,8 @@ export function WithdrawPage() {
 
   async function reviewWithdrawal() {
     const numericAmount = Number(amount);
-    if (!account) { setError('Bind a withdrawal account before continuing.'); return; }
-    if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0) { setError('Enter an amount greater than zero.'); return; }
+    if (!account) { setError('Bind a withdrawal account before continuing.'); playNotificationSound(); return; }
+    if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0) { setError('Enter an amount greater than zero.'); playNotificationSound(); return; }
     setStatus('submitting'); setError('');
     try { setPreview(await api.previewWithdrawal({ amount: numericAmount, phoneNumber: '', paymentMethod: account.paymentMethod, receiverName: '' })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Withdrawal validation failed.'); }
