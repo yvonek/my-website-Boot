@@ -4,7 +4,7 @@ import { api } from './api';
 import type { DashboardData, Plan, TransactionStatus, WalletTransactionStatus } from './api/types';
 import { AppShell } from './components/AppShell';
 import type { AuthUser } from './api/types';
-import { playNotificationSound, unlockNotificationSound } from './notifications';
+import { getInitialNotificationSoundEnabled, playNotificationSound, unlockNotificationSound } from './notifications';
 
 const HomeDashboard = lazy(() => import('./pages/HomeDashboard').then((module) => ({ default: module.HomeDashboard })));
 const InvitePage = lazy(() => import('./pages/InvitePage').then((module) => ({ default: module.InvitePage })));
@@ -118,7 +118,7 @@ export default function App() {
   const [accessUser, setAccessUser] = useState<AuthUser | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);
   const [dark, setDark] = useState(getInitialDarkMode);
-  const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => localStorage.getItem('notification-sound') === 'on');
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(getInitialNotificationSoundEnabled);
   const [data, setData] = useState<DashboardData | null>(null);
   const [state, setState] = useState<ViewState>('loading');
   const [reloadToken, setReloadToken] = useState(0);
@@ -198,6 +198,10 @@ export default function App() {
   useEffect(() => { localStorage.setItem('app-theme', dark ? 'dark' : 'light'); }, [dark]);
   const toggleNotificationSound = async () => {
     if (notificationSoundEnabled) {
+      if ('Notification' in window && Notification.permission === 'default') {
+        await registerPushSubscription(true).catch(() => undefined);
+        return;
+      }
       setNotificationSoundEnabled(false);
       localStorage.setItem('notification-sound', 'off');
       await unregisterPushSubscription().catch(() => undefined);

@@ -1,5 +1,9 @@
 let audioContext: AudioContext | null = null;
 
+export function getInitialNotificationSoundEnabled() {
+  return typeof window === 'undefined' || window.localStorage.getItem('notification-sound') !== 'off';
+}
+
 export function unlockNotificationSound() {
   try {
     if (typeof window === 'undefined' || window.localStorage.getItem('notification-sound') !== 'on' || typeof AudioContext === 'undefined') return;

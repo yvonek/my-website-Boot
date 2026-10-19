@@ -9,6 +9,7 @@ import { PlanCard } from '../components/PlanCard';
 import { PlansPage } from '../pages/PlansPage';
 import { WalletPage } from '../pages/WalletPage';
 import { api } from '../api';
+import { getInitialNotificationSoundEnabled } from '../notifications';
 import * as notifications from '../notifications';
 
 describe('transaction decision notifications', () => {
@@ -21,6 +22,17 @@ describe('transaction decision notifications', () => {
     expect(hasNewTransactionDecision(new Map([['withdraw-1', 'PENDING']]), [transaction('withdraw-1', 'REJECTED')])).toBe(true);
     expect(hasNewTransactionDecision(new Map([['withdraw-1', 'PENDING']]), [transaction('withdraw-1', 'PENDING')])).toBe(false);
     expect(hasNewTransactionDecision(new Map([['deposit-1', 'SUCCESS']]), [transaction('deposit-1', 'APPROVED')])).toBe(false);
+  });
+});
+
+describe('notification sound preference', () => {
+  it('defaults to on unless the user explicitly muted it', () => {
+    localStorage.removeItem('notification-sound');
+    expect(getInitialNotificationSoundEnabled()).toBe(true);
+    localStorage.setItem('notification-sound', 'off');
+    expect(getInitialNotificationSoundEnabled()).toBe(false);
+    localStorage.setItem('notification-sound', 'on');
+    expect(getInitialNotificationSoundEnabled()).toBe(true);
   });
 });
 
