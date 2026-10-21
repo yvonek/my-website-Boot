@@ -394,6 +394,18 @@ function imageDataValid(value: unknown, maxBytes: number) {
   return Boolean(match) && Buffer.from(match![2], 'base64').byteLength <= maxBytes;
 }
 
+function parseLuckyWheelPrize(input: Record<string, unknown>) {
+  const name = String(input.name ?? '').trim();
+  const description = String(input.description ?? '').trim();
+  const valueRwf = Number(input.valueRwf);
+  const weight = Number(input.weight ?? 1);
+  const imageData = input.imageData == null || input.imageData === '' ? null : input.imageData;
+  if (!name || name.length > 100 || description.length > 500 || !Number.isSafeInteger(valueRwf) || valueRwf <= 0 || !Number.isSafeInteger(weight) || weight < 1 || weight > 1000000 || input.enabled !== undefined && typeof input.enabled !== 'boolean' || imageData !== null && !imageDataValid(imageData, 4 * 1024 * 1024)) {
+    return { error: 'Enter a prize name, a positive whole-number value and weight, a description under 500 characters, and an optional PNG, JPEG, or WebP image up to 4 MB.' };
+  }
+  return { value: { name, description, valueRwf, weight, imageData: imageData as string | null, enabled: input.enabled !== false, position: Math.max(0, Math.floor(Number(input.position) || 0)) } };
+}
+
 async function withTransaction<T>(work: (client: PoolClient) => Promise<T>) {
   const client = await pool.connect();
   try {
@@ -1250,6 +1262,59 @@ export default {
         return json({ deleted: true });
       }
 
+      if (path === '/api/admin/lucky-wheel/prizes' && method === 'GET') {
+        if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
+        const result = await pool.query(`SELECT p.id, p.name, p.description, p.image_data AS "imageData", p.value_rwf AS "valueRwf", p.weight, p.enabled, p.position,
+          p.created_at AS "createdAt", p.updated_at AS "updatedAt", (SELECT count(*)::integer FROM lucky_wheel_spins s WHERE s.prize_id = p.id) AS wins
+          FROM lucky_wheel_prizes p ORDER BY p.position, p.created_at DESC`);
+        return json({ prizes: result.rows.map((prize) => ({ ...prize, enabled: Boolean(prize.enabled) })) });
+      }
+
+      if (path === '/api/admin/lucky-wheel/prizes' && method === 'POST') {
+        if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
+        const parsed = parseLuckyWheelPrize(await readBody(request));
+        if ('error' in parsed) return json({ error: parsed.error }, 400);
+        const prize = parsed.value;
+        const result = await pool.query(`INSERT INTO lucky_wheel_prizes (id, name, description, image_data, value_rwf, weight, enabled, position)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, name, description, image_data AS "imageData", value_rwf AS "valueRwf", weight, enabled, position, created_at AS "createdAt", updated_at AS "updatedAt"`,
+        [randomUUID(), prize.name, prize.description, prize.imageData, prize.valueRwf, prize.weight, prize.enabled, prize.position]);
+        await auditAdmin(user.id, null, 'LUCKY_WHEEL_PRIZE_CREATED', null, { id: result.rows[0].id, name: prize.name, valueRwf: prize.valueRwf, weight: prize.weight, enabled: prize.enabled, position: prize.position });
+        return json({ prize: result.rows[0] }, 201);
+      }
+
+      const luckyWheelPrizeRoute = path.match(/^\/api\/admin\/lucky-wheel\/prizes\/([^/]+)$/);
+      if (luckyWheelPrizeRoute && method === 'PUT') {
+        if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
+        const id = decodeURIComponent(luckyWheelPrizeRoute[1]);
+        const parsed = parseLuckyWheelPrize(await readBody(request));
+        if ('error' in parsed) return json({ error: parsed.error }, 400);
+        const prize = parsed.value;
+        const previous = await pool.query('SELECT id, name, value_rwf AS "valueRwf", enabled FROM lucky_wheel_prizes WHERE id = $1', [id]);
+        if (!previous.rows[0]) return json({ error: 'Prize not found.' }, 404);
+        const result = await pool.query(`UPDATE lucky_wheel_prizes SET name = $1, description = $2, image_data = $3, value_rwf = $4, weight = $5, enabled = $6, position = $7, updated_at = $8
+          WHERE id = $9 RETURNING id, name, description, image_data AS "imageData", value_rwf AS "valueRwf", weight, enabled, position, created_at AS "createdAt", updated_at AS "updatedAt"`,
+        [prize.name, prize.description, prize.imageData, prize.valueRwf, prize.weight, prize.enabled, prize.position, now(), id]);
+        await auditAdmin(user.id, null, 'LUCKY_WHEEL_PRIZE_UPDATED', previous.rows[0], { id, name: prize.name, valueRwf: prize.valueRwf, weight: prize.weight, enabled: prize.enabled, position: prize.position });
+        return json({ prize: result.rows[0] });
+      }
+
+      if (luckyWheelPrizeRoute && method === 'DELETE') {
+        if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
+        const id = decodeURIComponent(luckyWheelPrizeRoute[1]);
+        const result = await pool.query('DELETE FROM lucky_wheel_prizes WHERE id = $1 RETURNING id, name', [id]);
+        if (!result.rows[0]) return json({ error: 'Prize not found.' }, 404);
+        await auditAdmin(user.id, null, 'LUCKY_WHEEL_PRIZE_DELETED', result.rows[0], null);
+        return json({ deleted: true });
+      }
+
+      if (path === '/api/admin/lucky-wheel/spins' && method === 'GET') {
+        if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
+        const result = await pool.query(`SELECT s.id, s.user_id AS "userId", owner.full_name AS "userName", s.referral_user_id AS "referralUserId",
+          referral.full_name AS "referralName", s.prize_id AS "prizeId", s.prize_name AS "prizeName", s.prize_value_rwf AS "prizeValueRwf", s.created_at AS "createdAt"
+          FROM lucky_wheel_spins s JOIN users owner ON owner.id = s.user_id JOIN users referral ON referral.id = s.referral_user_id ORDER BY s.created_at DESC LIMIT 200`);
+        return json({ spins: result.rows.map((spin) => ({ ...spin, prizeValueRwf: Number(spin.prizeValueRwf) })) });
+      }
+
       if (path === '/api/admin/audit-log' && method === 'GET') {
         if (!isAdminUser) return json({ error: 'Admin authentication required.' }, 401);
         const [walletEntries, accountEntries] = await Promise.all([
@@ -1380,6 +1445,57 @@ export default {
         if (feature === 'withdraw' && !user.allowWithdrawals) return json({ error: 'Withdrawal access is disabled for this account. Contact support.', code: 'WITHDRAWAL_DISABLED' }, 403);
         return null;
       };
+
+      if (path === '/api/lucky-wheel' && method === 'GET') {
+        if (!user.permissions.myTeam) return json({ error: 'Access to myTeam is disabled for this account. Contact support.', code: 'FEATURE_DISABLED', feature: 'myTeam' }, 403);
+        if (user.accountStatus === 'FROZEN' || user.accountStatus === 'SUSPENDED') return json({ error: 'Your account cannot access the Lucky Wheel while restricted.', code: `ACCOUNT_${user.accountStatus}` }, 403);
+        const [referralResult, prizeResult, spinResult] = await Promise.all([
+          pool.query(`SELECT invitee.id AS "userId", invitee.full_name AS "fullName", invitee.created_at AS "joinedAt",
+            count(p.id)::integer AS "completedProducts", EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id) AS spun
+            FROM users invitee LEFT JOIN product_purchases p ON p.user_id = invitee.id AND p.status = 'COMPLETED'
+            WHERE invitee.referred_by = $1 GROUP BY invitee.id ORDER BY invitee.created_at`, [user.id]),
+          pool.query('SELECT id, name, description, image_data AS "imageData", value_rwf AS "valueRwf", weight FROM lucky_wheel_prizes WHERE enabled = TRUE ORDER BY position, created_at DESC'),
+          pool.query(`SELECT s.id, s.referral_user_id AS "referralUserId", referral.full_name AS "referralName", s.prize_id AS "prizeId", s.prize_name AS "prizeName", s.prize_description AS "prizeDescription",
+            s.prize_image_data AS "prizeImageData", s.prize_value_rwf AS "prizeValueRwf", s.created_at AS "createdAt" FROM lucky_wheel_spins s JOIN users referral ON referral.id = s.referral_user_id WHERE s.user_id = $1 ORDER BY s.created_at DESC`, [user.id]),
+        ]);
+        const referrals = referralResult.rows.map((referral) => ({ ...referral, completedProducts: Number(referral.completedProducts), spun: Boolean(referral.spun) }));
+        const spins = spinResult.rows.map((spin) => ({ ...spin, prizeValueRwf: Number(spin.prizeValueRwf) }));
+        return json({ prizes: prizeResult.rows.map((prize) => ({ ...prize, valueRwf: Number(prize.valueRwf) })), referrals, spins, remainingSpins: referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length });
+      }
+
+      if (path === '/api/lucky-wheel/spin' && method === 'POST') {
+        if (!user.permissions.myTeam) return json({ error: 'Access to myTeam is disabled for this account. Contact support.', code: 'FEATURE_DISABLED', feature: 'myTeam' }, 403);
+        if (user.accountStatus === 'FROZEN' || user.accountStatus === 'SUSPENDED') return json({ error: 'Your account cannot spin the Lucky Wheel while restricted.', code: `ACCOUNT_${user.accountStatus}` }, 403);
+        try {
+          const result = await withTransaction(async (client) => {
+            const referralResult = await client.query(`SELECT invitee.id AS "userId", invitee.full_name AS "fullName" FROM users invitee
+              WHERE invitee.referred_by = $1 AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
+              AND NOT EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id)
+              ORDER BY invitee.created_at, invitee.id LIMIT 1 FOR UPDATE OF invitee SKIP LOCKED`, [user.id]);
+            const referral = referralResult.rows[0];
+            if (!referral) return { error: 'You need an active direct referral who has not been used for a spin.' };
+            const prizeResult = await client.query('SELECT id, name, description, image_data AS "imageData", value_rwf AS "valueRwf", weight FROM lucky_wheel_prizes WHERE enabled = TRUE ORDER BY position, created_at DESC');
+            const prizes = prizeResult.rows;
+            const totalWeight = prizes.reduce((total, prize) => total + Number(prize.weight), 0);
+            if (!totalWeight) return { error: 'The Lucky Wheel has no active prizes yet.' };
+            let draw = randomInt(totalWeight);
+            const prize = prizes.find((item) => { draw -= Number(item.weight); return draw < 0; })!;
+            const spinResult = await client.query(`INSERT INTO lucky_wheel_spins (id, user_id, referral_user_id, prize_id, prize_name, prize_description, prize_image_data, prize_value_rwf)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, user_id AS "userId", referral_user_id AS "referralUserId", prize_id AS "prizeId", prize_name AS "prizeName",
+              prize_description AS "prizeDescription", prize_image_data AS "prizeImageData", prize_value_rwf AS "prizeValueRwf", created_at AS "createdAt"`,
+            [randomUUID(), user.id, referral.userId, prize.id, prize.name, prize.description, prize.imageData, prize.valueRwf]);
+            return { spin: { ...spinResult.rows[0], referralName: referral.fullName, prizeValueRwf: Number(spinResult.rows[0].prizeValueRwf) } };
+          });
+          if ('error' in result) return json({ error: result.error }, 409);
+          const remaining = await pool.query(`SELECT count(*)::integer AS count FROM users invitee WHERE invitee.referred_by = $1
+            AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
+            AND NOT EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id)`, [user.id]);
+          return json({ ...result, remainingSpins: Number(remaining.rows[0].count) });
+        } catch (error) {
+          if ((error as { code?: string }).code === '23505') return json({ error: 'This referral has already been used for a Lucky Wheel spin.' }, 409);
+          throw error;
+        }
+      }
 
       if (path === '/api/wallet/withdraw/account' && method === 'PUT') {
         const blocked = featureGuard('withdraw'); if (blocked) return blocked;

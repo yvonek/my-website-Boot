@@ -135,6 +135,7 @@ function featureForPath(path, method) {
   if (path === '/api/dashboard') return null;
   if (path.startsWith('/api/user/messages')) return 'messages';
   if (path === '/api/team' || path.startsWith('/api/team/')) return 'myTeam';
+  if (path === '/api/lucky-wheel' || path === '/api/lucky-wheel/spin') return 'myTeam';
   if (path.startsWith('/api/support/')) return 'support';
   if (path.startsWith('/api/wallet/withdraw') || path === '/api/withdrawals' || path === '/api/withdrawals/preview') return 'withdraw';
   if (path.startsWith('/api/wallet/deposit') || path === '/api/deposits' || path === '/api/deposit-methods') return 'deposit';
@@ -225,6 +226,17 @@ function withdrawalAccountFor(userId) { return database.prepare('SELECT account_
 function withdrawalDetailsValid(account, currency) { return account.paymentMethod === cryptoMethod ? validTronAddress(account.walletAddress) && Number(currency.unitsPerUsdt) > 0 : validPhone(account.phoneNumber, currency.countryCode); }
 function boundWithdrawalFields(input, userId, currency = currencyForUser(userId)) { const displayAmount = amountOf(input.amount); const amount = displayAmount ? baseAmount(displayAmount, currency) : null; const account = withdrawalAccountFor(userId); return { amount, displayAmount, account, valid: Boolean(amount && account && withdrawalDetailsValid(account, currency) && validMethod(account.paymentMethod)) }; }
 function imageDataValid(value, maxBytes) { if (typeof value !== 'string') return false; const match = value.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/); if (!match) return false; return Buffer.from(match[2], 'base64').byteLength <= maxBytes; }
+function parseLuckyWheelPrize(input) {
+  const name = String(input.name ?? '').trim();
+  const description = String(input.description ?? '').trim();
+  const valueRwf = Number(input.valueRwf);
+  const weight = Number(input.weight ?? 1);
+  const imageData = input.imageData == null || input.imageData === '' ? null : input.imageData;
+  if (!name || name.length > 100 || description.length > 500 || !Number.isSafeInteger(valueRwf) || valueRwf <= 0 || !Number.isSafeInteger(weight) || weight < 1 || weight > 1000000 || input.enabled !== undefined && typeof input.enabled !== 'boolean' || imageData !== null && !imageDataValid(imageData, maxProductImageBytes)) {
+    return { error: 'Enter a prize name, a positive whole-number value and weight, a description under 500 characters, and an optional PNG, JPEG, or WebP image up to 4 MB.' };
+  }
+  return { value: { name, description, valueRwf, weight, imageData, enabled: input.enabled !== false, position: Math.max(0, Math.floor(Number(input.position) || 0)) } };
+}
 function depositMethodView(row, currency = null) { const countryCode = row.country_code ?? 'RW'; const receivingCountryCode = row.receiving_country_code ?? countryCode; const receivingCurrency = countrySettingsForCode(receivingCountryCode); const currencyCode = currency?.currencyCode ?? 'RWF'; return { id: row.code, name: row.name, accountName: row.account_name, accountNumber: row.account_number, instructions: row.instructions, ussdTemplate: row.ussd_template ?? '', minimumAmount: row.minimum_amount, maximumAmount: row.maximum_amount, countryCode, currencyCode, customerUnitsPerRwf: Number(currency?.unitsPerRwf ?? 1), cryptoNetwork: row.crypto_network ?? '', unitsPerUsdt: Number(currency?.unitsPerUsdt ?? 0), usdtDepositFeeType: platformSettings().usdtDepositFeeType, usdtDepositFeeValue: platformSettings().usdtDepositFeeValue, crossBorderEnabled: Boolean(row.cross_border_enabled), receivingCountryCode, receivingCurrencyCode: receivingCurrency?.currencyCode ?? currencyCode, receivingUnitsPerRwf: Number(receivingCurrency?.unitsPerRwf ?? currency?.unitsPerRwf ?? 1), logoData: row.logo_data, enabled: Boolean(row.enabled), position: row.position }; }
 function publicDepositMethodView(row, view) { return ['BI', 'UG'].includes(row.country_code) || row.crypto_network === 'TRC20' || row.ussd_template ? view : { ...view, accountNumber: '' }; }
 function parseDepositMethod(input) {
@@ -906,6 +918,95 @@ async function handle(request, response) {
     const result = database.prepare('DELETE FROM plans WHERE name = ?').run(name);
     if (!result.changes) { sendJson(response, 404, { error: 'Plan not found.' }); return; }
     sendJson(response, 200, { deleted: true }); return;
+  }
+  if (path === '/api/admin/lucky-wheel/prizes' && method === 'GET') {
+    if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const prizes = database.prepare(`SELECT p.id, p.name, p.description, p.image_data AS imageData, p.value_rwf AS valueRwf, p.weight, p.enabled, p.position,
+      p.created_at AS createdAt, p.updated_at AS updatedAt, (SELECT count(*) FROM lucky_wheel_spins s WHERE s.prize_id = p.id) AS wins
+      FROM lucky_wheel_prizes p ORDER BY p.position, p.created_at DESC`).all().map((prize) => ({ ...prize, enabled: Boolean(prize.enabled) }));
+    sendJson(response, 200, { prizes }); return;
+  }
+  if (path === '/api/admin/lucky-wheel/prizes' && method === 'POST') {
+    if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const parsed = parseLuckyWheelPrize(await readBody(request));
+    if (parsed.error) { sendJson(response, 400, { error: parsed.error }); return; }
+    const prize = parsed.value;
+    const id = randomUUID();
+    database.prepare('INSERT INTO lucky_wheel_prizes (id, name, description, image_data, value_rwf, weight, enabled, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, prize.name, prize.description, prize.imageData, prize.valueRwf, prize.weight, prize.enabled ? 1 : 0, prize.position);
+    auditAdmin(adminUser(request)?.id, null, 'LUCKY_WHEEL_PRIZE_CREATED', null, { id, name: prize.name, valueRwf: prize.valueRwf, weight: prize.weight, enabled: prize.enabled, position: prize.position });
+    const created = database.prepare('SELECT id, name, description, image_data AS imageData, value_rwf AS valueRwf, weight, enabled, position, created_at AS createdAt, updated_at AS updatedAt FROM lucky_wheel_prizes WHERE id = ?').get(id);
+    sendJson(response, 201, { prize: { ...created, enabled: Boolean(created.enabled) } }); return;
+  }
+  const luckyWheelPrize = path.match(/^\/api\/admin\/lucky-wheel\/prizes\/([^/]+)$/);
+  if (luckyWheelPrize && method === 'PUT') {
+    if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const id = decodeURIComponent(luckyWheelPrize[1]);
+    const parsed = parseLuckyWheelPrize(await readBody(request));
+    if (parsed.error) { sendJson(response, 400, { error: parsed.error }); return; }
+    const previous = database.prepare('SELECT id, name, value_rwf AS valueRwf, enabled FROM lucky_wheel_prizes WHERE id = ?').get(id);
+    if (!previous) { sendJson(response, 404, { error: 'Prize not found.' }); return; }
+    const prize = parsed.value;
+    database.prepare('UPDATE lucky_wheel_prizes SET name = ?, description = ?, image_data = ?, value_rwf = ?, weight = ?, enabled = ?, position = ?, updated_at = ? WHERE id = ?')
+      .run(prize.name, prize.description, prize.imageData, prize.valueRwf, prize.weight, prize.enabled ? 1 : 0, prize.position, now(), id);
+    auditAdmin(adminUser(request)?.id, null, 'LUCKY_WHEEL_PRIZE_UPDATED', previous, { id, name: prize.name, valueRwf: prize.valueRwf, weight: prize.weight, enabled: prize.enabled, position: prize.position });
+    const updated = database.prepare('SELECT id, name, description, image_data AS imageData, value_rwf AS valueRwf, weight, enabled, position, created_at AS createdAt, updated_at AS updatedAt FROM lucky_wheel_prizes WHERE id = ?').get(id);
+    sendJson(response, 200, { prize: { ...updated, enabled: Boolean(updated.enabled) } }); return;
+  }
+  if (luckyWheelPrize && method === 'DELETE') {
+    if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const id = decodeURIComponent(luckyWheelPrize[1]);
+    const prize = database.prepare('SELECT id, name FROM lucky_wheel_prizes WHERE id = ?').get(id);
+    if (!prize) { sendJson(response, 404, { error: 'Prize not found.' }); return; }
+    database.prepare('DELETE FROM lucky_wheel_prizes WHERE id = ?').run(id);
+    auditAdmin(adminUser(request)?.id, null, 'LUCKY_WHEEL_PRIZE_DELETED', prize, null);
+    sendJson(response, 200, { deleted: true }); return;
+  }
+  if (path === '/api/admin/lucky-wheel/spins' && method === 'GET') {
+    if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }
+    const spins = database.prepare(`SELECT s.id, s.user_id AS userId, owner.full_name AS userName, s.referral_user_id AS referralUserId,
+      referral.full_name AS referralName, s.prize_id AS prizeId, s.prize_name AS prizeName, s.prize_value_rwf AS prizeValueRwf, s.created_at AS createdAt
+      FROM lucky_wheel_spins s JOIN users owner ON owner.id = s.user_id JOIN users referral ON referral.id = s.referral_user_id
+      ORDER BY s.created_at DESC LIMIT 200`).all();
+    sendJson(response, 200, { spins }); return;
+  }
+  if (path === '/api/lucky-wheel' && method === 'GET') {
+    const referrals = database.prepare(`SELECT invitee.id AS userId, invitee.full_name AS fullName, invitee.created_at AS joinedAt,
+      count(p.id) AS completedProducts, EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id) AS spun
+      FROM users invitee LEFT JOIN product_purchases p ON p.user_id = invitee.id AND p.status = 'COMPLETED'
+      WHERE invitee.referred_by = ? GROUP BY invitee.id ORDER BY invitee.created_at`).all(user.id).map((referral) => ({ ...referral, spun: Boolean(referral.spun) }));
+    const prizes = database.prepare('SELECT id, name, description, image_data AS imageData, value_rwf AS valueRwf, weight FROM lucky_wheel_prizes WHERE enabled = 1 ORDER BY position, created_at DESC').all();
+    const spins = database.prepare(`SELECT s.id, s.referral_user_id AS referralUserId, referral.full_name AS referralName, s.prize_id AS prizeId, s.prize_name AS prizeName, s.prize_description AS prizeDescription,
+      s.prize_image_data AS prizeImageData, s.prize_value_rwf AS prizeValueRwf, s.created_at AS createdAt FROM lucky_wheel_spins s JOIN users referral ON referral.id = s.referral_user_id WHERE s.user_id = ? ORDER BY s.created_at DESC`).all(user.id);
+    sendJson(response, 200, { prizes, referrals, spins, remainingSpins: referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length }); return;
+  }
+  if (path === '/api/lucky-wheel/spin' && method === 'POST') {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const referral = database.prepare(`SELECT invitee.id AS userId, invitee.full_name AS fullName FROM users invitee
+        WHERE invitee.referred_by = ? AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
+        AND NOT EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id) ORDER BY invitee.created_at, invitee.id LIMIT 1`).get(user.id);
+      if (!referral) { database.exec('ROLLBACK'); sendJson(response, 409, { error: 'You need an active direct referral who has not been used for a spin.' }); return; }
+      const prizes = database.prepare('SELECT id, name, description, image_data AS imageData, value_rwf AS valueRwf, weight FROM lucky_wheel_prizes WHERE enabled = 1 ORDER BY position, created_at DESC').all();
+      const totalWeight = prizes.reduce((total, prize) => total + prize.weight, 0);
+      if (!totalWeight) { database.exec('ROLLBACK'); sendJson(response, 409, { error: 'The Lucky Wheel has no active prizes yet.' }); return; }
+      let draw = randomInt(totalWeight);
+      const prize = prizes.find((item) => { draw -= item.weight; return draw < 0; });
+      const id = randomUUID();
+      database.prepare('INSERT INTO lucky_wheel_spins (id, user_id, referral_user_id, prize_id, prize_name, prize_description, prize_image_data, prize_value_rwf) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, user.id, referral.userId, prize.id, prize.name, prize.description, prize.imageData, prize.valueRwf);
+      database.exec('COMMIT');
+      const spin = database.prepare('SELECT id, user_id AS userId, referral_user_id AS referralUserId, prize_id AS prizeId, prize_name AS prizeName, prize_description AS prizeDescription, prize_image_data AS prizeImageData, prize_value_rwf AS prizeValueRwf, created_at AS createdAt FROM lucky_wheel_spins WHERE id = ?').get(id);
+      const remainingSpins = database.prepare(`SELECT count(*) AS count FROM users invitee WHERE invitee.referred_by = ?
+        AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
+        AND NOT EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id)`).get(user.id).count;
+      sendJson(response, 200, { spin: { ...spin, referralName: referral.fullName }, remainingSpins });
+    } catch (error) {
+      database.exec('ROLLBACK');
+      if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed/.test(error.message)) { sendJson(response, 409, { error: 'This referral has already been used for a Lucky Wheel spin.' }); return; }
+      throw error;
+    }
+    return;
   }
   if (path === '/api/admin/support/settings' && method === 'GET') {
     if (!isAdmin(request)) { sendJson(response, 401, { error: 'Admin authentication required.' }); return; }

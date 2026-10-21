@@ -77,6 +77,10 @@ export interface DashboardData {
 export interface DailyCheckinStatus { enabled: boolean; rewardAmount: number; displayRewardAmount?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; claimed: boolean; claimedAt: string | null; }
 export interface DailyCheckinClaim { claimed: true; rewardAmount: number; displayRewardAmount?: number; currencyCode?: 'RWF' | 'BIF' | 'UGX'; checkinDate: string; balance: WalletBalance; }
 export interface GiftCodeRedemption { redeemed: true; amount: number; displayAmount: number; currencyCode: CurrencyCode; balance: WalletBalance; }
+export interface LuckyWheelPrize { id: string; name: string; description: string; imageData: string | null; valueRwf: number; weight?: number; enabled?: boolean; position?: number; wins?: number; }
+export interface LuckyWheelReferral { userId: string; fullName: string; joinedAt: string; completedProducts: number; spun: boolean; }
+export interface LuckyWheelSpin { id: string; userId?: string; referralUserId: string; referralName?: string; prizeId: string; prizeName: string; prizeDescription: string; prizeImageData: string | null; prizeValueRwf: number; createdAt: string; }
+export interface LuckyWheelData { prizes: LuckyWheelPrize[]; referrals: LuckyWheelReferral[]; spins: LuckyWheelSpin[]; remainingSpins: number; }
 
 export interface ApiClient {
   getCurrentUser(): Promise<{ user: AuthUser | null }>;
@@ -96,6 +100,8 @@ export interface ApiClient {
   getDailyCheckin(): Promise<DailyCheckinStatus>;
   claimDailyCheckin(): Promise<DailyCheckinClaim>;
   redeemGiftCode(code: string): Promise<GiftCodeRedemption>;
+  getLuckyWheel(): Promise<LuckyWheelData>;
+  spinLuckyWheel(): Promise<{ spin: LuckyWheelSpin; remainingSpins: number }>;
   getDepositMethods(): Promise<{ methods: DepositPaymentMethod[] }>;
   createDeposit(input: DepositRequest): Promise<WalletTransactionResponse>;
   createWithdrawal(input: WalletRequest): Promise<WalletTransactionResponse>;

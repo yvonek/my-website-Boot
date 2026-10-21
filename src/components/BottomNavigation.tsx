@@ -1,11 +1,12 @@
 import { Tab, TabList, type SelectTabData } from '@fluentui/react-components';
-import { ChartMultipleRegular, HomeRegular, PeopleRegular, WalletRegular, MailRegular } from '@fluentui/react-icons';
+import { ChartMultipleRegular, GiftRegular, HomeRegular, PeopleRegular, WalletRegular, MailRegular } from '@fluentui/react-icons';
 import type { UserPermissions } from '../api/types';
 
 const routes = [
   { value: '/', label: 'Home', icon: <HomeRegular />, permission: 'dashboard' as const },
   { value: '/plans', label: 'Products', icon: <ChartMultipleRegular />, permission: 'products' as const },
   { value: '/team', label: 'My Team', icon: <PeopleRegular />, permission: 'myTeam' as const },
+  { value: '/lucky-wheel', label: 'Wheel', icon: <GiftRegular />, permission: 'myTeam' as const },
   { value: '/wallet', label: 'My Wallet', icon: <WalletRegular />, permission: 'wallet' as const },
   { value: '/messages', label: 'Messages', icon: <MailRegular />, permission: 'messages' as const },
   { value: '/support', label: 'Support', icon: <PeopleRegular />, permission: 'support' as const },

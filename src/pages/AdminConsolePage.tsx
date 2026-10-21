@@ -1,6 +1,6 @@
 import { Badge, Button, Card, Field, Input, MessageBar, MessageBarBody, Text, Textarea, Title1, Title2 } from '@fluentui/react-components';
 import { ArrowDownRegular, ArrowUpRegular, CheckmarkCircleRegular, ClipboardTaskRegular, GiftRegular, PeopleRegular, SettingsRegular, WalletRegular } from '@fluentui/react-icons';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AdminBusinessSettingsPage } from './AdminBusinessSettingsPage';
 import { AdminCountrySettingsPage } from './AdminCountrySettingsPage';
 import { AdminTransactionsPage } from './AdminTransactionsPage';
@@ -13,7 +13,9 @@ import type { ChangeEvent } from 'react';
 import { api } from '../api';
 import type { AdminPlanInput, Plan } from '../api/types';
 
-type AdminView = 'overview' | 'members' | 'active' | 'live' | 'deposits' | 'withdrawals' | 'plans' | 'rewards' | 'promoters' | 'messages' | 'settings' | 'countries' | 'audit';
+const AdminLuckyWheelPage = lazy(() => import('./AdminLuckyWheelPage').then((module) => ({ default: module.AdminLuckyWheelPage })));
+
+type AdminView = 'overview' | 'members' | 'active' | 'live' | 'deposits' | 'withdrawals' | 'plans' | 'rewards' | 'wheel' | 'promoters' | 'messages' | 'settings' | 'countries' | 'audit';
 interface AdminPlan { name: string; description: string; imageData: string; price: number; dailyIncome: number; durationDays: number; purchaseBonus: number; totalSlots: number; soldSlots: number; remainingSlots: number; progressPercent: number; soldOut: boolean; status: Plan['status']; position: number; deposited: string; incomePerDay: number; term: string; note: string; }
 interface Overview { members: number; pendingDeposits: { count: number; amount: number }; pendingWithdrawals: { count: number; amount: number }; plans: number; liveUsers?: number; completedDeposits?: number; completedWithdrawals?: number; productsSold?: number; referrals?: number; summary?: { totalUsers: number; activeUsers: number; liveUsers: number; totalDeposit: number; totalWithdrawal: number; totalProductsSold: number; totalReferrals: number; totalReferralCommissions: number }; }
 interface AuditEntry { id: string; targetUserId?: string | null; adminUserId?: string | null; action: string; previousValue?: string | null; newValue?: string | null; metadata?: string | null; createdAt: string; }
@@ -26,6 +28,7 @@ const navigation: { id: AdminView; label: string; icon: typeof WalletRegular }[]
   { id: 'withdrawals', label: 'Withdrawals', icon: ArrowUpRegular },
   { id: 'plans', label: 'Plans', icon: WalletRegular },
   { id: 'rewards', label: 'Rewards', icon: GiftRegular },
+  { id: 'wheel', label: 'Lucky Wheel', icon: GiftRegular },
   { id: 'promoters', label: 'Promoters', icon: PeopleRegular },
   { id: 'live', label: 'Live users', icon: PeopleRegular },
   { id: 'messages', label: 'Messages', icon: ClipboardTaskRegular },
@@ -36,7 +39,7 @@ const navigation: { id: AdminView; label: string; icon: typeof WalletRegular }[]
 
 const adminRouteByView: Record<AdminView, string> = {
   overview: '/admin', members: '/admin/users', deposits: '/admin/deposits', withdrawals: '/admin/withdrawals',
-  plans: '/admin/products', rewards: '/admin/rewards', promoters: '/admin/referrals', active: '/admin/active-users', live: '/admin/live-users',
+  plans: '/admin/products', rewards: '/admin/rewards', wheel: '/admin/lucky-wheel', promoters: '/admin/referrals', active: '/admin/active-users', live: '/admin/live-users',
   messages: '/admin/messages', settings: '/admin/settings', countries: '/admin/countries', audit: '/admin/audit',
 };
 
@@ -48,6 +51,7 @@ function adminViewForPath(path: string): AdminView {
   if (path === '/admin/withdrawals') return 'withdrawals';
   if (path === '/admin/products' || path === '/admin/plans') return 'plans';
   if (path === '/admin/rewards') return 'rewards';
+  if (path === '/admin/lucky-wheel') return 'wheel';
   if (path === '/admin/referrals' || path === '/admin/promoters') return 'promoters';
   if (path === '/admin/messages') return 'messages';
   if (path === '/admin/settings') return 'settings';
@@ -175,6 +179,7 @@ export function AdminConsolePage({ adminName, onLogout }: { adminName: string; o
     if (view === 'settings') return <AdminBusinessSettingsPage sessionAdmin section="settings" />;
     if (view === 'countries') return <AdminCountrySettingsPage />;
     if (view === 'rewards') return <AdminBusinessSettingsPage sessionAdmin section="rewards" />;
+    if (view === 'wheel') return <Suspense fallback={<Text className="muted">Loading Lucky Wheel...</Text>}><AdminLuckyWheelPage /></Suspense>;
     if (view === 'promoters') return <AdminPromotersPage onOpenUser={openUserDetails} />;
     if (view === 'live') return <AdminLiveUsersPage onOpenUser={openUserDetails} />;
     if (view === 'messages') return <AdminMessagesPage />;
