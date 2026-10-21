@@ -32,6 +32,22 @@ async function register(fullName, phoneNumber, referralCode) {
   return result;
 }
 
+async function createProduct(headers, name, price) {
+  return request('/api/admin/plans', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name, description: 'Product for Lucky Wheel eligibility testing.', imageData, price, dailyIncome: 1, durationDays: 10, totalSlots: 10, status: 'Active', position: 1 }),
+  });
+}
+
+async function purchase(cookie, productId, idempotencyKey) {
+  return request('/api/purchases', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productId, idempotencyKey }),
+  }, cookie);
+}
+
 before(async () => {
   const env = { ...process.env, DATABASE_PATH: databasePath, API_PORT: String(port), ADMIN_API_TOKEN: adminToken };
   execFileSync(process.execPath, ['backend/migrate.mjs'], { cwd: root, env, stdio: 'pipe' });
@@ -63,6 +79,9 @@ test('only a completed direct referral earns one server-selected prize spin', as
 
   const beforePurchase = await request('/api/lucky-wheel', {}, owner.cookie);
   assert.equal(beforePurchase.body.remainingSpins, 0);
+  assert.equal(beforePurchase.body.hasQualifyingPurchase, false);
+  assert.equal(beforePurchase.body.displayPurchaseThreshold, 60000);
+  assert.equal(beforePurchase.body.currencyCode, 'RWF');
   assert.equal(beforePurchase.body.referrals[0].completedProducts, 0);
 
   const denied = await request('/api/lucky-wheel/spin', { method: 'POST', headers: { 'content-type': 'application/json' } }, owner.cookie);
@@ -71,23 +90,34 @@ test('only a completed direct referral earns one server-selected prize spin', as
   const database = new DatabaseSync(databasePath);
   try {
     database.prepare('UPDATE wallet_accounts SET available_balance = 1000 WHERE user_id = ?').run(active.body.user.id);
+    database.prepare('UPDATE wallet_accounts SET available_balance = 130001 WHERE user_id = ?').run(owner.body.user.id);
   } finally { database.close(); }
-  const product = await request('/api/admin/plans', {
-    method: 'POST',
-    headers: adminHeaders,
-    body: JSON.stringify({ name: 'Qualifying product', description: 'Test purchase for a Lucky Wheel referral.', imageData, price: 100, dailyIncome: 1, durationDays: 10, totalSlots: 10, status: 'Active', position: 1 }),
-  });
-  assert.equal(product.response.status, 201);
-  const purchase = await request('/api/purchases', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ productId: 'Qualifying product', idempotencyKey: 'wheel-qualified-purchase' }),
-  }, active.cookie);
-  assert.equal(purchase.response.status, 201);
+  for (const [name, price] of [['Referral product', 100], ['Owner boundary product', 60000], ['Owner qualifying product', 60001]]) {
+    const product = await createProduct(adminHeaders, name, price);
+    assert.equal(product.response.status, 201);
+  }
+  assert.equal((await purchase(active.cookie, 'Referral product', 'wheel-referral-purchase')).response.status, 201);
+
+  const activeReferral = await request('/api/lucky-wheel', {}, owner.cookie);
+  assert.equal(activeReferral.body.remainingSpins, 0);
+  assert.equal(activeReferral.body.hasQualifyingPurchase, false);
+  assert.equal((await request('/api/lucky-wheel/spin', { method: 'POST', headers: { 'content-type': 'application/json' } }, owner.cookie)).response.status, 409);
+
+  assert.equal((await purchase(owner.cookie, 'Owner boundary product', 'wheel-owner-60000')).response.status, 201);
+  const atThreshold = await request('/api/lucky-wheel', {}, owner.cookie);
+  assert.equal(atThreshold.body.hasQualifyingPurchase, false);
+  assert.equal((await request('/api/lucky-wheel/spin', { method: 'POST', headers: { 'content-type': 'application/json' } }, owner.cookie)).response.status, 409);
+
+  assert.equal((await purchase(owner.cookie, 'Owner qualifying product', 'wheel-owner-60001')).response.status, 201);
+  const aboveThreshold = await request('/api/lucky-wheel', {}, owner.cookie);
+  assert.equal(aboveThreshold.body.hasQualifyingPurchase, true);
+  assert.equal(aboveThreshold.body.remainingSpins, 1);
+  assert.equal(aboveThreshold.body.prizes[0].displayValue, 120000);
 
   const firstSpin = await request('/api/lucky-wheel/spin', { method: 'POST', headers: { 'content-type': 'application/json' } }, owner.cookie);
   assert.equal(firstSpin.response.status, 200);
   assert.equal(firstSpin.body.spin.prizeId, prize.body.prize.id);
+  assert.equal(firstSpin.body.spin.displayPrizeValue, 120000);
   assert.equal(firstSpin.body.remainingSpins, 0);
   const repeatedSpin = await request('/api/lucky-wheel/spin', { method: 'POST', headers: { 'content-type': 'application/json' } }, owner.cookie);
   assert.equal(repeatedSpin.response.status, 409);

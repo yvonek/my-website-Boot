@@ -1449,7 +1449,8 @@ export default {
       if (path === '/api/lucky-wheel' && method === 'GET') {
         if (!user.permissions.myTeam) return json({ error: 'Access to myTeam is disabled for this account. Contact support.', code: 'FEATURE_DISABLED', feature: 'myTeam' }, 403);
         if (user.accountStatus === 'FROZEN' || user.accountStatus === 'SUSPENDED') return json({ error: 'Your account cannot access the Lucky Wheel while restricted.', code: `ACCOUNT_${user.accountStatus}` }, 403);
-        const [referralResult, prizeResult, spinResult] = await Promise.all([
+        const [currency, referralResult, prizeResult, spinResult, ownerPurchaseResult] = await Promise.all([
+          currencyForUser(user.id),
           pool.query(`SELECT invitee.id AS "userId", invitee.full_name AS "fullName", invitee.created_at AS "joinedAt",
             count(p.id)::integer AS "completedProducts", EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id) AS spun
             FROM users invitee LEFT JOIN product_purchases p ON p.user_id = invitee.id AND p.status = 'COMPLETED'
@@ -1457,16 +1458,32 @@ export default {
           pool.query('SELECT id, name, description, image_data AS "imageData", value_rwf AS "valueRwf", weight FROM lucky_wheel_prizes WHERE enabled = TRUE ORDER BY position, created_at DESC'),
           pool.query(`SELECT s.id, s.referral_user_id AS "referralUserId", referral.full_name AS "referralName", s.prize_id AS "prizeId", s.prize_name AS "prizeName", s.prize_description AS "prizeDescription",
             s.prize_image_data AS "prizeImageData", s.prize_value_rwf AS "prizeValueRwf", s.created_at AS "createdAt" FROM lucky_wheel_spins s JOIN users referral ON referral.id = s.referral_user_id WHERE s.user_id = $1 ORDER BY s.created_at DESC`, [user.id]),
+          pool.query("SELECT EXISTS (SELECT 1 FROM product_purchases WHERE user_id = $1 AND status = 'COMPLETED' AND qualifying_amount > 60000) AS eligible", [user.id]),
         ]);
+        const hasQualifyingPurchase = Boolean(ownerPurchaseResult.rows[0].eligible);
         const referrals = referralResult.rows.map((referral) => ({ ...referral, completedProducts: Number(referral.completedProducts), spun: Boolean(referral.spun) }));
-        const spins = spinResult.rows.map((spin) => ({ ...spin, prizeValueRwf: Number(spin.prizeValueRwf) }));
-        return json({ prizes: prizeResult.rows.map((prize) => ({ ...prize, valueRwf: Number(prize.valueRwf) })), referrals, spins, remainingSpins: referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length });
+        const spins = spinResult.rows.map((spin) => ({ ...spin, prizeValueRwf: Number(spin.prizeValueRwf), displayPrizeValue: localAmount(Number(spin.prizeValueRwf), currency.unitsPerRwf), currencyCode: currency.currencyCode }));
+        return json({
+          prizes: prizeResult.rows.map((prize) => ({ ...prize, valueRwf: Number(prize.valueRwf), displayValue: localAmount(Number(prize.valueRwf), currency.unitsPerRwf), currencyCode: currency.currencyCode })),
+          referrals,
+          spins,
+          hasQualifyingPurchase,
+          purchaseThresholdRwf: 60000,
+          displayPurchaseThreshold: localAmount(60000, currency.unitsPerRwf),
+          currencyCode: currency.currencyCode,
+          remainingSpins: hasQualifyingPurchase ? referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length : 0,
+        });
       }
 
       if (path === '/api/lucky-wheel/spin' && method === 'POST') {
         if (!user.permissions.myTeam) return json({ error: 'Access to myTeam is disabled for this account. Contact support.', code: 'FEATURE_DISABLED', feature: 'myTeam' }, 403);
         if (user.accountStatus === 'FROZEN' || user.accountStatus === 'SUSPENDED') return json({ error: 'Your account cannot spin the Lucky Wheel while restricted.', code: `ACCOUNT_${user.accountStatus}` }, 403);
         try {
+          const [currency, ownerPurchaseResult] = await Promise.all([
+            currencyForUser(user.id),
+            pool.query("SELECT EXISTS (SELECT 1 FROM product_purchases WHERE user_id = $1 AND status = 'COMPLETED' AND qualifying_amount > 60000) AS eligible", [user.id]),
+          ]);
+          if (!ownerPurchaseResult.rows[0].eligible) return json({ error: 'Complete a product purchase above 60,000 RWF to unlock Lucky Wheel spins.' }, 409);
           const result = await withTransaction(async (client) => {
             const referralResult = await client.query(`SELECT invitee.id AS "userId", invitee.full_name AS "fullName" FROM users invitee
               WHERE invitee.referred_by = $1 AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
@@ -1484,7 +1501,7 @@ export default {
               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, user_id AS "userId", referral_user_id AS "referralUserId", prize_id AS "prizeId", prize_name AS "prizeName",
               prize_description AS "prizeDescription", prize_image_data AS "prizeImageData", prize_value_rwf AS "prizeValueRwf", created_at AS "createdAt"`,
             [randomUUID(), user.id, referral.userId, prize.id, prize.name, prize.description, prize.imageData, prize.valueRwf]);
-            return { spin: { ...spinResult.rows[0], referralName: referral.fullName, prizeValueRwf: Number(spinResult.rows[0].prizeValueRwf) } };
+            return { spin: { ...spinResult.rows[0], referralName: referral.fullName, prizeValueRwf: Number(spinResult.rows[0].prizeValueRwf), displayPrizeValue: localAmount(Number(spinResult.rows[0].prizeValueRwf), currency.unitsPerRwf), currencyCode: currency.currencyCode } };
           });
           if ('error' in result) return json({ error: result.error }, 409);
           const remaining = await pool.query(`SELECT count(*)::integer AS count FROM users invitee WHERE invitee.referred_by = $1

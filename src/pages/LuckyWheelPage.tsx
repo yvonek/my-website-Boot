@@ -68,11 +68,13 @@ export function LuckyWheelPage() {
   if (loading) return <Card className="state-panel"><Text>Loading Lucky Wheel...</Text></Card>;
   if (error && !wheel) return <MessageBar intent="error"><MessageBarBody>{error}<Button appearance="transparent" onClick={() => { setLoading(true); void loadWheel(); }}>Retry</Button></MessageBarBody></MessageBar>;
   if (!wheel) return null;
-  const eligibleCount = wheel.referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length;
+  const eligibleCount = wheel.hasQualifyingPurchase ? wheel.referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length : 0;
   const prizeCount = wheel.prizes.length;
+  const currencyCode = wheel.currencyCode ?? 'RWF';
+  const amount = (valueRwf: number, displayValue?: number, code = currencyCode) => formatCurrencyAmount(displayValue ?? valueRwf, code);
 
   return <div className="lucky-wheel-page">
-    <header className="lucky-wheel-heading"><div><Text className="lucky-wheel-kicker">REFERRAL REWARDS</Text><Title1>Lucky Wheel</Title1><Text className="lucky-wheel-subtitle">Active direct referrals give you one chance each.</Text></div><div className="lucky-wheel-count"><PeopleTeamRegular /><span><strong>{eligibleCount}</strong><small>spins available</small></span></div></header>
+    <header className="lucky-wheel-heading"><div><Text className="lucky-wheel-kicker">REFERRAL REWARDS</Text><Title1>Lucky Wheel</Title1><Text className="lucky-wheel-subtitle">Buy a product above {amount(wheel.purchaseThresholdRwf, wheel.displayPurchaseThreshold)}. Each active direct referral unlocks one spin.</Text></div><div className="lucky-wheel-count"><PeopleTeamRegular /><span><strong>{eligibleCount}</strong><small>spins available</small></span></div></header>
 
     {error && <MessageBar intent="warning"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
 
@@ -85,15 +87,16 @@ export function LuckyWheelPage() {
             return <div className="lucky-wheel-segment" key={prize.id} style={{ transform: `translate(-50%, -50%) rotate(${angle}deg) translateY(-34cqw) rotate(${-angle}deg)` }}>
               {prize.imageData && <img src={prize.imageData} alt="" />}
               <strong>{prize.name}</strong>
-              <small>{formatCurrencyAmount(prize.valueRwf, 'RWF')}</small>
+              <small>{amount(prize.valueRwf, prize.displayValue, prize.currencyCode)}</small>
             </div>;
           })}
           <div className="lucky-wheel-hub"><GiftRegular /><span>LUCKY</span></div>
         </div>
       </div>
       <div className="lucky-wheel-action">
-        <Button appearance="primary" size="large" disabled={spinning || wheel.remainingSpins === 0 || prizeCount === 0} onClick={() => void spin()}>{spinning ? 'Spinning...' : 'Spin the wheel'}</Button>
-        {latestWin ? <div className="lucky-wheel-win" role="status"><Badge color="success">WINNER</Badge><strong>{latestWin.prizeName}</strong><span>{latestWin.prizeDescription || formatCurrencyAmount(latestWin.prizeValueRwf, 'RWF')}</span><small>Referral used: {latestWin.referralName}</small></div>
+        <Button appearance="primary" size="large" disabled={spinning || !wheel.hasQualifyingPurchase || wheel.remainingSpins === 0 || prizeCount === 0} onClick={() => void spin()}>{spinning ? 'Spinning...' : 'Spin the wheel'}</Button>
+        {latestWin ? <div className="lucky-wheel-win" role="status"><Badge color="success">WINNER</Badge><strong>{latestWin.prizeName}</strong><span>{latestWin.prizeDescription || amount(latestWin.prizeValueRwf, latestWin.displayPrizeValue, latestWin.currencyCode)}</span><small>Referral used: {latestWin.referralName}</small></div>
+          : !wheel.hasQualifyingPurchase ? <Text className="lucky-wheel-hint">Complete a product purchase above {amount(wheel.purchaseThresholdRwf, wheel.displayPurchaseThreshold)} to unlock your referral spins.</Text>
           : wheel.remainingSpins === 0 ? <Text className="lucky-wheel-hint">Invite someone and wait until they complete a product purchase to unlock a spin.</Text>
             : prizeCount === 0 ? <Text className="lucky-wheel-hint">There are no active prizes right now.</Text>
               : <Text className="lucky-wheel-hint">{wheel.remainingSpins} spin{wheel.remainingSpins === 1 ? '' : 's'} ready</Text>}
@@ -101,13 +104,13 @@ export function LuckyWheelPage() {
     </section>
 
     <section className="lucky-wheel-section"><div className="lucky-wheel-section-heading"><div><Text className="lucky-wheel-kicker">PRIZE LIST</Text><h2>Available prizes</h2></div><Text>{prizeCount} active</Text></div>
-      <div className="lucky-prize-grid">{wheel.prizes.map((prize) => <Card className="lucky-prize" key={prize.id}>{prize.imageData ? <img src={prize.imageData} alt={prize.name} /> : <span className="lucky-prize-placeholder"><GiftRegular /></span>}<div><strong>{prize.name}</strong><span>{prize.description}</span><b>{formatCurrencyAmount(prize.valueRwf, 'RWF')}</b></div></Card>)}{prizeCount === 0 && <Text className="lucky-wheel-hint">Prize details will appear here when available.</Text>}</div>
+      <div className="lucky-prize-grid">{wheel.prizes.map((prize) => <Card className="lucky-prize" key={prize.id}>{prize.imageData ? <img src={prize.imageData} alt={prize.name} /> : <span className="lucky-prize-placeholder"><GiftRegular /></span>}<div><strong>{prize.name}</strong><span>{prize.description}</span><b>{amount(prize.valueRwf, prize.displayValue, prize.currencyCode)}</b></div></Card>)}{prizeCount === 0 && <Text className="lucky-wheel-hint">Prize details will appear here when available.</Text>}</div>
     </section>
 
     <section className="lucky-wheel-section"><div className="lucky-wheel-section-heading"><div><Text className="lucky-wheel-kicker">YOUR REFERRALS</Text><h2>Spin eligibility</h2></div><Text>{wheel.referrals.length} direct</Text></div>
-      <div className="lucky-referral-list">{wheel.referrals.map((referral) => <div className="lucky-referral-row" key={referral.userId}><span><strong>{referral.fullName}</strong><small>Joined {new Date(referral.joinedAt).toLocaleDateString()} · {referral.completedProducts} completed product{referral.completedProducts === 1 ? '' : 's'}</small></span><Badge color={referral.spun ? 'informative' : referral.completedProducts ? 'success' : 'warning'}>{referral.spun ? 'SPIN USED' : referral.completedProducts ? 'READY' : 'NEEDS PURCHASE'}</Badge></div>)}{wheel.referrals.length === 0 && <Text className="lucky-wheel-hint">Your direct referrals will appear here.</Text>}</div>
+      <div className="lucky-referral-list">{wheel.referrals.map((referral) => <div className="lucky-referral-row" key={referral.userId}><span><strong>{referral.fullName}</strong><small>Joined {new Date(referral.joinedAt).toLocaleDateString()} · {referral.completedProducts} completed product{referral.completedProducts === 1 ? '' : 's'}</small></span><Badge color={referral.spun ? 'informative' : referral.completedProducts && wheel.hasQualifyingPurchase ? 'success' : 'warning'}>{referral.spun ? 'SPIN USED' : !wheel.hasQualifyingPurchase ? 'OWNER PURCHASE REQUIRED' : referral.completedProducts ? 'READY' : 'NEEDS PURCHASE'}</Badge></div>)}{wheel.referrals.length === 0 && <Text className="lucky-wheel-hint">Your direct referrals will appear here.</Text>}</div>
     </section>
 
-    {wheel.spins.length > 0 && <section className="lucky-wheel-section"><div className="lucky-wheel-section-heading"><div><Text className="lucky-wheel-kicker">WIN HISTORY</Text><h2>Past wins</h2></div><Text>{wheel.spins.length} total</Text></div><div className="lucky-win-list">{wheel.spins.map((win) => <div className="lucky-win-row" key={win.id}>{win.prizeImageData ? <img src={win.prizeImageData} alt="" /> : <span className="lucky-prize-placeholder"><GiftRegular /></span>}<span><strong>{win.prizeName}</strong><small>From {win.referralName ?? 'an active referral'} · {new Date(win.createdAt).toLocaleString()}</small></span><b>{formatCurrencyAmount(win.prizeValueRwf, 'RWF')}</b></div>)}</div></section>}
+    {wheel.spins.length > 0 && <section className="lucky-wheel-section"><div className="lucky-wheel-section-heading"><div><Text className="lucky-wheel-kicker">WIN HISTORY</Text><h2>Past wins</h2></div><Text>{wheel.spins.length} total</Text></div><div className="lucky-win-list">{wheel.spins.map((win) => <div className="lucky-win-row" key={win.id}>{win.prizeImageData ? <img src={win.prizeImageData} alt="" /> : <span className="lucky-prize-placeholder"><GiftRegular /></span>}<span><strong>{win.prizeName}</strong><small>From {win.referralName ?? 'an active referral'} · {new Date(win.createdAt).toLocaleString()}</small></span><b>{amount(win.prizeValueRwf, win.displayPrizeValue, win.currencyCode)}</b></div>)}</div></section>}
   </div>;
 }

@@ -971,6 +971,8 @@ async function handle(request, response) {
     sendJson(response, 200, { spins }); return;
   }
   if (path === '/api/lucky-wheel' && method === 'GET') {
+    const currency = currencyForUser(user.id);
+    const hasQualifyingPurchase = Boolean(database.prepare("SELECT EXISTS (SELECT 1 FROM product_purchases WHERE user_id = ? AND status = 'COMPLETED' AND qualifying_amount > 60000) AS eligible").get(user.id).eligible);
     const referrals = database.prepare(`SELECT invitee.id AS userId, invitee.full_name AS fullName, invitee.created_at AS joinedAt,
       count(p.id) AS completedProducts, EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id) AS spun
       FROM users invitee LEFT JOIN product_purchases p ON p.user_id = invitee.id AND p.status = 'COMPLETED'
@@ -978,11 +980,22 @@ async function handle(request, response) {
     const prizes = database.prepare('SELECT id, name, description, image_data AS imageData, value_rwf AS valueRwf, weight FROM lucky_wheel_prizes WHERE enabled = 1 ORDER BY position, created_at DESC').all();
     const spins = database.prepare(`SELECT s.id, s.referral_user_id AS referralUserId, referral.full_name AS referralName, s.prize_id AS prizeId, s.prize_name AS prizeName, s.prize_description AS prizeDescription,
       s.prize_image_data AS prizeImageData, s.prize_value_rwf AS prizeValueRwf, s.created_at AS createdAt FROM lucky_wheel_spins s JOIN users referral ON referral.id = s.referral_user_id WHERE s.user_id = ? ORDER BY s.created_at DESC`).all(user.id);
-    sendJson(response, 200, { prizes, referrals, spins, remainingSpins: referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length }); return;
+    sendJson(response, 200, {
+      prizes: prizes.map((prize) => ({ ...prize, displayValue: localAmount(prize.valueRwf, currency), currencyCode: currency.currencyCode })),
+      referrals,
+      spins: spins.map((spin) => ({ ...spin, displayPrizeValue: localAmount(spin.prizeValueRwf, currency), currencyCode: currency.currencyCode })),
+      hasQualifyingPurchase,
+      purchaseThresholdRwf: 60000,
+      displayPurchaseThreshold: localAmount(60000, currency),
+      currencyCode: currency.currencyCode,
+      remainingSpins: hasQualifyingPurchase ? referrals.filter((referral) => referral.completedProducts > 0 && !referral.spun).length : 0,
+    }); return;
   }
   if (path === '/api/lucky-wheel/spin' && method === 'POST') {
     database.exec('BEGIN IMMEDIATE');
     try {
+      const ownerPurchase = database.prepare("SELECT EXISTS (SELECT 1 FROM product_purchases WHERE user_id = ? AND status = 'COMPLETED' AND qualifying_amount > 60000) AS eligible").get(user.id);
+      if (!ownerPurchase.eligible) { database.exec('ROLLBACK'); sendJson(response, 409, { error: 'Complete a product purchase above 60,000 RWF to unlock Lucky Wheel spins.' }); return; }
       const referral = database.prepare(`SELECT invitee.id AS userId, invitee.full_name AS fullName FROM users invitee
         WHERE invitee.referred_by = ? AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
         AND NOT EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id) ORDER BY invitee.created_at, invitee.id LIMIT 1`).get(user.id);
@@ -1000,7 +1013,8 @@ async function handle(request, response) {
       const remainingSpins = database.prepare(`SELECT count(*) AS count FROM users invitee WHERE invitee.referred_by = ?
         AND EXISTS (SELECT 1 FROM product_purchases p WHERE p.user_id = invitee.id AND p.status = 'COMPLETED')
         AND NOT EXISTS (SELECT 1 FROM lucky_wheel_spins s WHERE s.referral_user_id = invitee.id)`).get(user.id).count;
-      sendJson(response, 200, { spin: { ...spin, referralName: referral.fullName }, remainingSpins });
+      const currency = currencyForUser(user.id);
+      sendJson(response, 200, { spin: { ...spin, referralName: referral.fullName, displayPrizeValue: localAmount(spin.prizeValueRwf, currency), currencyCode: currency.currencyCode }, remainingSpins });
     } catch (error) {
       database.exec('ROLLBACK');
       if (error.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed/.test(error.message)) { sendJson(response, 409, { error: 'This referral has already been used for a Lucky Wheel spin.' }); return; }
