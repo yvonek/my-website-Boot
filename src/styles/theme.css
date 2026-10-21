@@ -425,21 +425,24 @@ button { font-family: inherit; }
 .lucky-referral-row small, .lucky-win-row small { color: #68727e; font-size: 11px; }
 .lucky-win-row > img, .lucky-win-row > .lucky-prize-placeholder { flex: 0 0 42px; width: 42px; height: 42px; border-radius: 6px; object-fit: cover; }
 @media (max-width: 760px) {
-  .app-root:has(.lucky-wheel-page) .app-nav { gap: 2px; padding-right: 5px; padding-left: 5px; }
-  .app-root:has(.lucky-wheel-page) .app-nav .fui-Tab { font-size: 9px; }
+  .app-root .app-nav { gap: 1px; padding-right: 4px; padding-left: 4px; }
+  .app-root .app-nav .fui-Tab { gap: 2px; padding-right: 0; padding-left: 0; font-size: 8px; line-height: 1.05; text-align: center; white-space: normal; overflow-wrap: anywhere; }
+  .app-root .app-nav .fui-Tab .fui-Tab__icon { font-size: 16px; }
   .lucky-wheel-stage { grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px 12px; }
-  .lucky-wheel { width: min(100%, 390px); }
+  .lucky-wheel { width: min(100%, 320px); }
   .lucky-wheel-pointer { top: 2px; }
   .lucky-wheel-action { padding-bottom: 4px; }
   .lucky-prize-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 460px) {
+  .app-root .app-nav .fui-Tab { min-height: 48px; font-size: 7px; }
+  .app-root .app-nav .fui-Tab .fui-Tab__icon { font-size: 15px; }
   .lucky-wheel-heading { align-items: flex-start; }
   .lucky-wheel-count { gap: 6px; padding: 8px; }
   .lucky-wheel-count strong { font-size: 17px; }
   .lucky-wheel-count small { max-width: 50px; font-size: 9px; }
   .lucky-wheel-stage { padding-right: 6px; padding-left: 6px; }
-  .lucky-wheel { border-width: 7px; }
+  .lucky-wheel { width: min(100%, 280px); border-width: 7px; }
   .lucky-wheel-pointer { border-right-width: 13px; border-left-width: 13px; border-top-width: 25px; }
   .lucky-prize-grid { grid-template-columns: minmax(0, 1fr); }
 }
